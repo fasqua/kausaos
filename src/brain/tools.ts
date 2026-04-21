@@ -464,6 +464,11 @@ export const allTools: ToolDefinition[] = [
     input_schema: { type: 'object', properties: {} },
   },
   {
+    name: 'get_sol_price',
+    description: 'Get current SOL price in USD with price changes over 1h, 6h, and 24h timeframes. Real-time data from DexScreener.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
     name: 'get_system_status',
     description: 'Get KausaOS system status: uptime, active strategies, last heartbeat, pending operations.',
     input_schema: { type: 'object', properties: {} },
@@ -477,7 +482,7 @@ export const allTools: ToolDefinition[] = [
 export async function executeTool(
   toolCall: ToolCall,
   apiClient: KausaLayerClient,
-  context: { strategies?: any; systemStatus?: any }
+  context: { strategies?: any; systemStatus?: any; priceData?: any; strategyEngine?: any }
 ): Promise<string> {
   const { name, input } = toolCall;
 
@@ -608,15 +613,70 @@ export async function executeTool(
 
       // Strategy (local operations - handled by strategy engine)
       case 'create_strategy':
+        if (context.strategyEngine) {
+          const strat = context.strategyEngine.createStrategy({
+            name: (input.name as string) || 'unnamed',
+            trigger_type: input.trigger_type as any,
+            trigger_condition: input.trigger_condition as string,
+            trigger_interval_seconds: (input.trigger_interval_seconds as number) || 60,
+            action_type: input.action_type as any,
+            action_params: (input.action_params as any) || {},
+            max_executions_per_day: (input.max_executions_per_day as number) || 5,
+            cooldown_minutes: (input.cooldown_minutes as number) || 30,
+          });
+          result = { success: true, data: strat };
+        } else {
+          result = { success: false, error: 'Strategy engine not available' };
+        }
+        break;
       case 'list_strategies':
+        if (context.strategyEngine) {
+          const strats = context.strategyEngine.listStrategies();
+          result = { success: true, data: { strategies: strats, count: strats.length } };
+        } else {
+          result = { success: false, error: 'Strategy engine not available' };
+        }
+        break;
       case 'pause_strategy':
+        if (context.strategyEngine) {
+          const paused = context.strategyEngine.pauseStrategy(input.strategy_id as string);
+          result = { success: paused, data: { paused }, error: paused ? undefined : 'Strategy not found' };
+        } else {
+          result = { success: false, error: 'Strategy engine not available' };
+        }
+        break;
       case 'resume_strategy':
+        if (context.strategyEngine) {
+          const resumed = context.strategyEngine.resumeStrategy(input.strategy_id as string);
+          result = { success: resumed, data: { resumed }, error: resumed ? undefined : 'Strategy not found' };
+        } else {
+          result = { success: false, error: 'Strategy engine not available' };
+        }
+        break;
       case 'delete_strategy':
+        if (context.strategyEngine) {
+          const deleted = context.strategyEngine.deleteStrategy(input.strategy_id as string);
+          result = { success: deleted, data: { deleted }, error: deleted ? undefined : 'Strategy not found' };
+        } else {
+          result = { success: false, error: 'Strategy engine not available' };
+        }
+        break;
       case 'get_strategy_logs':
-        result = { success: true, data: { handled_by: 'strategy_engine', tool: name, input } };
+        if (context.strategyEngine) {
+          const logs = context.strategyEngine.getStrategyLogs(input.strategy_id as string);
+          result = { success: true, data: { logs, count: logs.length } };
+        } else {
+          result = { success: false, error: 'Strategy engine not available' };
+        }
         break;
 
       // System
+      case 'get_sol_price':
+        result = {
+          success: true,
+          data: context.priceData || { price: 0, change_h1: 0, change_h6: 0, change_h24: 0 },
+        };
+        break;
       case 'get_system_status':
         result = {
           success: true,

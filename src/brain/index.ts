@@ -21,6 +21,8 @@ export class Brain {
   private conversationHistory: LlmMessage[];
   private systemContext: SystemContext;
   private maxToolLoops: number;
+  private priceData: any;
+  private strategyEngine: any;
 
   constructor(options: BrainOptions) {
     this.llm = createLlmProvider(options.config.llm);
@@ -28,6 +30,8 @@ export class Brain {
     this.basePath = options.basePath;
     this.conversationHistory = [];
     this.maxToolLoops = 10;
+    this.priceData = null;
+    this.strategyEngine = null;
     this.systemContext = {
       activePockets: 0,
       activeStrategies: 0,
@@ -43,6 +47,14 @@ export class Brain {
 
   clearHistory(): void {
     this.conversationHistory = [];
+  }
+
+  setStrategyEngine(engine: any): void {
+    this.strategyEngine = engine;
+  }
+
+  setPriceData(data: any): void {
+    this.priceData = data;
   }
 
   getApiClient(): KausaLayerClient {
@@ -82,6 +94,8 @@ export class Brain {
         const toolResult = await executeTool(toolCall, this.apiClient, {
           strategies: null,
           systemStatus: this.systemContext,
+          priceData: this.priceData,
+          strategyEngine: this.strategyEngine,
         });
 
         // Add assistant message with tool call indication

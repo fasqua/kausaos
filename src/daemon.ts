@@ -11,6 +11,7 @@ import { Brain } from './brain';
 import { StrategyEngine } from './strategy';
 import { Heartbeat } from './heartbeat';
 import { TerminalChannel } from './channels';
+import { PriceMonitor } from './monitor';
 
 const BANNER = `
  _  __                       ___  ____  
@@ -58,6 +59,9 @@ async function main(): Promise<void> {
   const dbPath = path.resolve(basePath, config.database.path);
   const strategyEngine = new StrategyEngine(dbPath);
   console.log('[KausaOS] Strategy engine initialized');
+
+  // Connect strategy engine to brain
+  brain.setStrategyEngine(strategyEngine);
 
   // Initialize heartbeat
   const heartbeat = new Heartbeat(
@@ -127,6 +131,13 @@ async function syncBrainContext(
       lastHeartbeat: heartbeat.getLastBeat(),
       tierName: tierInfo.tier,
     });
+
+    // Sync price data to brain
+    try {
+      const priceMonitor = heartbeat.getPriceMonitor();
+      const priceInfo = await priceMonitor.getPriceInfo();
+      brain.setPriceData(priceInfo);
+    } catch (_) {}
 
     console.log(`[KausaOS] Context synced: ${activePockets} pockets, ${strategies.length} strategies, tier: ${tierInfo.tier}`);
   } catch (err: any) {

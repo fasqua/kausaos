@@ -1,18 +1,20 @@
 /**
  * KausaOS - Heartbeat Scheduler
- * Wakes up every N minutes, evaluates strategies, executes actions
+ * Phase 2: PriceMonitor integration + per-strategy interval support
  */
 
 import { StrategyEngine } from './strategy/engine';
 import { evaluateTrigger, fetchTriggerState } from './strategy/triggers';
 import { executeAction } from './strategy/actions';
 import { KausaLayerClient } from './brain/api-client';
+import { PriceMonitor } from './monitor/price';
 
 export class Heartbeat {
   private intervalMinutes: number;
   private timer: NodeJS.Timeout | null;
   private strategyEngine: StrategyEngine;
   private apiClient: KausaLayerClient;
+  private priceMonitor: PriceMonitor;
   private running: boolean;
   private lastBeat: string | null;
   private beatCount: number;
@@ -26,6 +28,7 @@ export class Heartbeat {
     this.timer = null;
     this.strategyEngine = strategyEngine;
     this.apiClient = apiClient;
+    this.priceMonitor = new PriceMonitor();
     this.running = false;
     this.lastBeat = null;
     this.beatCount = 0;
@@ -62,6 +65,10 @@ export class Heartbeat {
     return this.beatCount;
   }
 
+  getPriceMonitor(): PriceMonitor {
+    return this.priceMonitor;
+  }
+
   private async beat(): Promise<void> {
     if (!this.running) return;
 
@@ -82,18 +89,31 @@ export class Heartbeat {
 
       console.log(`[Heartbeat] Evaluating ${strategies.length} active strategies`);
 
-      // Fetch current state for trigger evaluation
-      const triggerState = await fetchTriggerState(this.apiClient);
+      // Fetch current state with real price data
+      const triggerState = await fetchTriggerState(this.apiClient, this.priceMonitor);
+
+      // Log price info
+      if (triggerState.solPrice > 0) {
+        console.log(`[Heartbeat] SOL: $${triggerState.solPrice.toFixed(2)} (1h: ${triggerState.solPriceChange_h1.toFixed(2)}%, 6h: ${triggerState.solPriceChange_h6.toFixed(2)}%, 24h: ${triggerState.solPriceChange_h24.toFixed(2)}%)`);
+      }
 
       // Evaluate each strategy
       for (const strategy of strategies) {
         try {
+          // Per-strategy interval check
+          if (strategy.trigger_interval_seconds > 0 && strategy.last_executed_at) {
+            const lastExec = new Date(strategy.last_executed_at).getTime();
+            const intervalMs = strategy.trigger_interval_seconds * 1000;
+            if (Date.now() - lastExec < intervalMs) {
+              continue; // Skip, not enough time passed for this strategy
+            }
+          }
+
           const triggerResult = await evaluateTrigger(strategy, triggerState);
 
           if (triggerResult.triggered) {
             console.log(`[Heartbeat] Strategy "${strategy.name}" TRIGGERED: ${triggerResult.reason}`);
 
-            // Execute the action
             const actionResult = await executeAction(
               strategy,
               triggerResult,
@@ -101,7 +121,6 @@ export class Heartbeat {
               this.strategyEngine
             );
 
-            // Log the execution
             this.strategyEngine.logExecution(
               strategy.id,
               triggerResult.reason,
