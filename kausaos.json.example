@@ -1,0 +1,19 @@
+{
+  "llm": {
+    "provider": "openrouter",
+    "model": "anthropic/claude-sonnet-4",
+    "api_key": "YOUR_OPENROUTER_API_KEY"
+  },
+  "kausalayer": {
+    "api_key": "YOUR_KAUSALAYER_API_KEY",
+    "endpoint": "http://localhost:3033"
+  },
+  "channels": {
+    "telegram": { "enabled": false, "bot_token": "" },
+    "discord": { "enabled": false, "bot_token": "" },
+    "terminal": { "enabled": true }
+  },
+  "heartbeat": { "interval_minutes": 30 },
+  "dashboard": { "enabled": false, "port": 3000 },
+  "database": { "path": "./kausaos.db" }
+}
