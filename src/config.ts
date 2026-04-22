@@ -35,6 +35,10 @@ export interface DatabaseConfig {
   path: string;
 }
 
+export interface NotificationConfig {
+  webhooks: string[];
+}
+
 export interface KausaOSConfig {
   llm: LlmConfig;
   kausalayer: KausaLayerConfig;
@@ -46,6 +50,7 @@ export interface KausaOSConfig {
   heartbeat: HeartbeatConfig;
   dashboard: DashboardConfig;
   database: DatabaseConfig;
+  notifications?: NotificationConfig;
 }
 
 const CONFIG_FILE = 'kausaos.json';

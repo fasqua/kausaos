@@ -11,6 +11,7 @@ import { Brain } from './brain';
 import { StrategyEngine } from './strategy';
 import { Heartbeat } from './heartbeat';
 import { TerminalChannel } from './channels';
+import { Notifier } from './notify';
 import { PriceMonitor } from './monitor';
 
 const BANNER = `
@@ -71,6 +72,14 @@ async function main(): Promise<void> {
   );
   heartbeat.start();
   console.log('[KausaOS] Heartbeat started');
+
+  // Initialize notifier with webhooks from config
+  const webhooks = config.notifications?.webhooks || [];
+  const notifier = new Notifier(webhooks);
+  heartbeat.setNotifier(notifier);
+  if (webhooks.length > 0) {
+    console.log(`[KausaOS] Notifications: ${webhooks.length} webhook(s) configured`);
+  }
 
   // Sync brain context from live data
   await syncBrainContext(brain, strategyEngine, heartbeat);

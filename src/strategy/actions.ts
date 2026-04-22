@@ -6,6 +6,7 @@
 import { Strategy, ActionType, StrategyEngine } from './engine';
 import { TriggerResult } from './triggers';
 import { KausaLayerClient } from '../brain/api-client';
+import { Notifier } from '../notify';
 
 export interface ActionResult {
   success: boolean;
@@ -17,7 +18,8 @@ export async function executeAction(
   strategy: Strategy,
   triggerResult: TriggerResult,
   apiClient: KausaLayerClient,
-  strategyEngine: StrategyEngine
+  strategyEngine: StrategyEngine,
+  notifier?: Notifier
 ): Promise<ActionResult> {
   const { action_type, action_params } = strategy;
   const matchedPockets = triggerResult.matchedPockets || [];
@@ -37,7 +39,7 @@ export async function executeAction(
       case 'recover':
         return await actionRecover(matchedPockets, apiClient);
       case 'notify':
-        return actionNotify(action_params, strategy.name, triggerResult.reason);
+        return await actionNotify(action_params, strategy.name, triggerResult.reason, notifier);
       default:
         return { success: false, message: `Unknown action type: ${action_type}` };
     }
@@ -206,15 +208,24 @@ async function actionRecover(
   };
 }
 
-function actionNotify(
+async function actionNotify(
   params: Record<string, any>,
   strategyName: string,
-  triggerReason: string
-): ActionResult {
+  triggerReason: string,
+  notifier?: Notifier
+): Promise<ActionResult> {
   const message = params.message || `Strategy "${strategyName}" triggered: ${triggerReason}`;
 
-  // For now, log to console. Telegram/Discord webhook will be added later.
-  console.log(`[NOTIFY] ${message}`);
+  if (notifier) {
+    await notifier.send(message, {
+      strategy: strategyName,
+      trigger: triggerReason,
+      action: 'notify',
+      success: true,
+    });
+  } else {
+    console.log(`[NOTIFY] ${message}`);
+  }
 
   return { success: true, message: `Notification sent: ${message}` };
 }

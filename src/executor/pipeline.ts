@@ -9,6 +9,7 @@ import { TriggerResult } from '../strategy/triggers';
 import { ActionResult, executeAction } from '../strategy/actions';
 import { KausaLayerClient } from '../brain/api-client';
 import { StrategyEngine } from '../strategy/engine';
+import { Notifier } from '../notify';
 
 export interface PipelineResult {
   success: boolean;
@@ -41,7 +42,8 @@ export class ExecutionPipeline {
     strategy: Strategy,
     triggerResult: TriggerResult,
     apiClient: KausaLayerClient,
-    strategyEngine: StrategyEngine
+    strategyEngine: StrategyEngine,
+    notifier?: Notifier
   ): Promise<PipelineResult> {
 
     // Stage 1: Validation
@@ -78,7 +80,8 @@ export class ExecutionPipeline {
           strategy,
           triggerResult,
           apiClient,
-          strategyEngine
+          strategyEngine,
+          notifier
         );
 
         // Clear tracked operations on success

@@ -32,6 +32,17 @@ export class TerminalChannel {
     console.log(chalk.gray('\nType your message to interact with KausaOS.'));
     console.log(chalk.gray('Commands: /quit /clear /status /strategies\n'));
 
+
+    // Show startup summary
+    try {
+      const summary = await this.brain.getStartupSummary();
+      if (summary) {
+        console.log(chalk.yellow('--- Session Summary ---'));
+        console.log(chalk.white(summary));
+        console.log(chalk.yellow('-----------------------\n'));
+      }
+    } catch (_) {}
+
     this.prompt();
   }
 

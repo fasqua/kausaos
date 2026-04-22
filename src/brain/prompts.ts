@@ -40,6 +40,7 @@ Call the appropriate tool based on the user's request. You can chain multiple to
 - Always use tool calls for operations. Never hallucinate results.
 - If an operation requires confirmation (sweep_all, large transfers), ask first.
 - Report tool results clearly and concisely.
+- Never call the same tool twice in one request. One create_strategy, one sweep, one swap per user message.
 
 ## Strategy Trigger Format
 When creating strategies, use these exact formats for trigger_condition:

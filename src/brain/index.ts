@@ -61,6 +61,49 @@ export class Brain {
     return this.apiClient;
   }
 
+  async getStartupSummary(): Promise<string> {
+    const parts: string[] = [];
+
+    // Strategy summary
+    if (this.strategyEngine) {
+      const strategies = this.strategyEngine.listStrategies();
+      const active = strategies.filter((s: any) => s.status === 'active').length;
+      const paused = strategies.filter((s: any) => s.status === 'paused').length;
+      if (strategies.length > 0) {
+        parts.push(`Strategies: ${active} active, ${paused} paused`);
+      }
+
+      // Recent execution logs
+      let recentLogs: any[] = [];
+      for (const strat of strategies) {
+        const logs = this.strategyEngine.getStrategyLogs(strat.id, 5);
+        recentLogs = recentLogs.concat(logs);
+      }
+      if (recentLogs.length > 0) {
+        recentLogs.sort((a: any, b: any) => b.triggered_at.localeCompare(a.triggered_at));
+        const recent = recentLogs.slice(0, 5);
+        parts.push(`Recent activity: ${recent.length} execution(s)`);
+        for (const log of recent) {
+          const status = log.success ? 'ok' : 'fail';
+          parts.push(`  [${status}] ${log.action_type}: ${log.action_result}`);
+        }
+      }
+    }
+
+    // Pocket summary
+    try {
+      const pockets = await this.apiClient.getActivePocketCount();
+      parts.push(`Active pockets: ${pockets}`);
+    } catch (_) {}
+
+    // Tier
+    const tier = this.apiClient.getTierInfo();
+    parts.push(`Tier: ${tier.tier}`);
+
+    if (parts.length === 0) return '';
+    return parts.join('\n');
+  }
+
   async processMessage(userMessage: string): Promise<string> {
     // Add user message to history
     this.conversationHistory.push({ role: 'user', content: userMessage });
@@ -70,6 +113,7 @@ export class Brain {
     let loopCount = 0;
 
     // Tool execution loop - LLM may call multiple tools in sequence
+    const executedTools: Set<string> = new Set();
     while (loopCount < this.maxToolLoops) {
       loopCount++;
 
@@ -89,8 +133,13 @@ export class Brain {
         break;
       }
 
-      // Execute each tool call
+      // Execute each tool call (skip duplicates of mutating operations)
       for (const toolCall of llmResponse.tool_calls) {
+        const mutatingTools = ['create_strategy', 'delete_strategy', 'sweep_pocket', 'sweep_all_pockets', 'send_to_pocket', 'swap_execute', 'create_pocket', 'delete_pocket'];
+        if (mutatingTools.includes(toolCall.name) && executedTools.has(toolCall.name)) {
+          continue; // Skip duplicate mutating tool call
+        }
+        executedTools.add(toolCall.name);
         const toolResult = await executeTool(toolCall, this.apiClient, {
           strategies: null,
           systemStatus: this.systemContext,

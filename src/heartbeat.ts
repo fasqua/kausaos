@@ -10,6 +10,7 @@ import { ExecutionPipeline } from './executor/pipeline';
 import { KausaLayerClient } from './brain/api-client';
 import { PriceMonitor } from './monitor/price';
 import { OperationsMonitor } from './monitor/operations';
+import { Notifier } from './notify';
 
 export class Heartbeat {
   private intervalMinutes: number;
@@ -23,6 +24,7 @@ export class Heartbeat {
   private quiet: boolean;
   private pipeline: ExecutionPipeline;
   private opsMonitor: OperationsMonitor;
+  private notifier: Notifier;
 
   constructor(
     intervalMinutes: number,
@@ -40,6 +42,7 @@ export class Heartbeat {
     this.quiet = false;
     this.pipeline = new ExecutionPipeline();
     this.opsMonitor = new OperationsMonitor();
+    this.notifier = new Notifier();
   }
 
   start(): void {
@@ -79,6 +82,10 @@ export class Heartbeat {
 
   getPriceMonitor(): PriceMonitor {
     return this.priceMonitor;
+  }
+
+  setNotifier(notifier: Notifier): void {
+    this.notifier = notifier;
   }
 
   getPendingOperations(): number {
@@ -134,7 +141,8 @@ export class Heartbeat {
               strategy,
               triggerResult,
               this.apiClient,
-              this.strategyEngine
+              this.strategyEngine,
+              this.notifier
             );
 
             this.strategyEngine.logExecution(

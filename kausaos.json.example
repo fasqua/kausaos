@@ -15,5 +15,6 @@
   },
   "heartbeat": { "interval_minutes": 30 },
   "dashboard": { "enabled": false, "port": 3000 },
-  "database": { "path": "./kausaos.db" }
+  "database": { "path": "./kausaos.db" },
+  "notifications": { "webhooks": [] }
 }
