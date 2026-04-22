@@ -7,6 +7,7 @@
 import { Strategy, TriggerType } from './engine';
 import { KausaLayerClient } from '../brain/api-client';
 import { PriceMonitor } from '../monitor/price';
+import { OperationsMonitor } from '../monitor/operations';
 
 export interface TriggerState {
   pockets: Array<{
@@ -384,7 +385,8 @@ function evaluatePocketCount(condition: string, state: TriggerState): TriggerRes
  */
 export async function fetchTriggerState(
   apiClient: KausaLayerClient,
-  priceMonitor?: PriceMonitor
+  priceMonitor?: PriceMonitor,
+  opsMonitor?: OperationsMonitor
 ): Promise<TriggerState> {
   // Get pockets
   const pocketsRes = await apiClient.listPockets();
@@ -425,6 +427,16 @@ export async function fetchTriggerState(
     solPriceChange_h6,
     solPriceChange_h24,
     activePocketCount,
-    pendingOperations: 0,
+    pendingOperations: await getPendingCount(apiClient, opsMonitor),
   };
+}
+
+async function getPendingCount(apiClient: KausaLayerClient, opsMonitor?: OperationsMonitor): Promise<number> {
+  if (!opsMonitor) return 0;
+  try {
+    const status = await opsMonitor.checkOperations(apiClient);
+    return status.pending + status.failed.length;
+  } catch (_) {
+    return 0;
+  }
 }

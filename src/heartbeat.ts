@@ -9,6 +9,7 @@ import { executeAction } from './strategy/actions';
 import { ExecutionPipeline } from './executor/pipeline';
 import { KausaLayerClient } from './brain/api-client';
 import { PriceMonitor } from './monitor/price';
+import { OperationsMonitor } from './monitor/operations';
 
 export class Heartbeat {
   private intervalMinutes: number;
@@ -21,6 +22,7 @@ export class Heartbeat {
   private beatCount: number;
   private quiet: boolean;
   private pipeline: ExecutionPipeline;
+  private opsMonitor: OperationsMonitor;
 
   constructor(
     intervalMinutes: number,
@@ -37,6 +39,7 @@ export class Heartbeat {
     this.beatCount = 0;
     this.quiet = false;
     this.pipeline = new ExecutionPipeline();
+    this.opsMonitor = new OperationsMonitor();
   }
 
   start(): void {
@@ -103,7 +106,7 @@ export class Heartbeat {
       if (!this.quiet) console.log(`[Heartbeat] Evaluating ${strategies.length} active strategies`);
 
       // Fetch current state with real price data
-      const triggerState = await fetchTriggerState(this.apiClient, this.priceMonitor);
+      const triggerState = await fetchTriggerState(this.apiClient, this.priceMonitor, this.opsMonitor);
 
       // Log price info
       if (triggerState.solPrice > 0) {
@@ -160,8 +163,20 @@ export class Heartbeat {
       if (anomalies.length > 0) {
         console.log(`[Heartbeat] ANOMALY: ${anomalies.length} operation(s) stuck > 10 minutes`);
       }
+
+      // Check backend for stuck/failed operations
+      try {
+        const opsStatus = await this.opsMonitor.checkOperations(this.apiClient);
+        if (opsStatus.stuck.length > 0) {
+          console.log(`[Heartbeat] STUCK: ${opsStatus.stuck.length} operation(s) stuck in backend`);
+        }
+        if (opsStatus.failed.length > 0) {
+          console.log(`[Heartbeat] FAILED: ${opsStatus.failed.length} operation(s) failed in backend`);
+        }
+      } catch (_) {}
     } catch (err: any) {
       console.error(`[Heartbeat] Beat error: ${err.message}`);
     }
+
   }
 }
