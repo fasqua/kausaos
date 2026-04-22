@@ -77,22 +77,18 @@ async function main(): Promise<void> {
 
   // Re-sync after first heartbeat fires (5s + buffer)
   setTimeout(async () => {
-    await syncBrainContext(brain, strategyEngine, heartbeat);
+    await syncBrainContext(brain, strategyEngine, heartbeat, true);
   }, 8000);
 
-  // Re-sync brain context after each heartbeat
-  const originalBeat = heartbeat.getBeatCount.bind(heartbeat);
+
+  // Re-sync brain context on each heartbeat cycle
   const syncInterval = setInterval(async () => {
-    await syncBrainContext(brain, strategyEngine, heartbeat);
-
-  // Re-sync after first heartbeat fires (5s + buffer)
-  setTimeout(async () => {
-    await syncBrainContext(brain, strategyEngine, heartbeat);
-  }, 8000);
+    await syncBrainContext(brain, strategyEngine, heartbeat, true);
   }, config.heartbeat.interval_minutes * 60 * 1000);
 
   // Start channels
   if (config.channels.terminal.enabled) {
+    heartbeat.setQuiet(true); // suppress routine logs in terminal mode
     const terminal = new TerminalChannel(brain);
     await terminal.start();
     console.log('[KausaOS] Terminal channel started');
@@ -117,7 +113,8 @@ async function main(): Promise<void> {
 async function syncBrainContext(
   brain: Brain,
   strategyEngine: StrategyEngine,
-  heartbeat: Heartbeat
+  heartbeat: Heartbeat,
+  quiet: boolean = false
 ): Promise<void> {
   try {
     const apiClient = brain.getApiClient();
@@ -139,7 +136,7 @@ async function syncBrainContext(
       brain.setPriceData(priceInfo);
     } catch (_) {}
 
-    console.log(`[KausaOS] Context synced: ${activePockets} pockets, ${strategies.length} strategies, tier: ${tierInfo.tier}`);
+    if (!quiet) console.log(`[KausaOS] Context synced: ${activePockets} pockets, ${strategies.length} strategies, tier: ${tierInfo.tier}`);
   } catch (err: any) {
     console.warn(`[KausaOS] Context sync failed: ${err.message}`);
   }

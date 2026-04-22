@@ -113,10 +113,10 @@ async function evaluateMultiCondition(
 function detectTriggerType(condition: string): TriggerType {
   if (condition.includes('pocket.balance')) return 'balance_threshold';
   if (condition.startsWith('cron:') || condition.startsWith('every:')) return 'time_based';
-  if (condition.includes('sol_drop') || condition.includes('sol_rise')) return 'price_based';
+  if (condition.includes('sol_drop') || condition.includes('sol_rise') || condition.includes('sol_price')) return 'price_based';
   if (condition.includes('funding_status') || condition.includes('failed')) return 'status_based';
   if (condition.includes('idle')) return 'idle_time';
-  if (condition.includes('active_pockets')) return 'pocket_count';
+  if (condition.includes('active_pockets') || condition.includes('pocket_count')) return 'pocket_count';
   return 'balance_threshold'; // default
 }
 
@@ -216,18 +216,57 @@ function evaluateTimeBased(condition: string): TriggerResult {
  * Timeframes: h1, h6, h24 (default: h6)
  */
 function evaluatePriceBased(condition: string, state: TriggerState): TriggerResult {
-  // Parse: "sol_drop > 20 h6" or "sol_drop > 20"
+  // Support multiple formats:
+  // Format 1: "sol_drop > 20 h6" or "sol_drop > 20"
+  // Format 2: "sol_price_change_6h < -5" (LLM generated)
+
+  // Try Format 2 first (LLM generated)
+  const altMatch = condition.match(/sol_price_change_(\w+)\s*(>|<|>=|<=)\s*(-?[\d.]+)/);
+  if (altMatch) {
+    let tf = altMatch[1];
+    if (tf === '1h') tf = 'h1';
+    if (tf === '6h') tf = 'h6';
+    if (tf === '24h') tf = 'h24';
+    const threshold = parseFloat(altMatch[3]);
+
+    let priceChange = 0;
+    switch (tf) {
+      case 'h1': priceChange = state.solPriceChange_h1; break;
+      case 'h6': priceChange = state.solPriceChange_h6; break;
+      case 'h24': priceChange = state.solPriceChange_h24; break;
+    }
+
+    let met = false;
+    switch (altMatch[2]) {
+      case '>': met = priceChange > threshold; break;
+      case '<': met = priceChange < threshold; break;
+      case '>=': met = priceChange >= threshold; break;
+      case '<=': met = priceChange <= threshold; break;
+    }
+
+    if (met) {
+      return {
+        triggered: true,
+        reason: `SOL price change ${priceChange.toFixed(2)}% in ${tf} meets: ${condition}`,
+      };
+    }
+    return {
+      triggered: false,
+      reason: `SOL price change ${priceChange.toFixed(2)}% in ${tf}, condition: ${condition}`,
+    };
+  }
+
+  // Format 1: "sol_drop > 20 h6" or "sol_drop > 20"
   const match = condition.match(/(sol_drop|sol_rise)\s*(>|<|>=|<=)\s*([\d.]+)\s*(h1|h6|h24)?/);
   if (!match) {
     return { triggered: false, reason: `Invalid price condition: ${condition}` };
   }
 
-  const direction = match[1]; // sol_drop or sol_rise
+  const direction = match[1];
   const operator = match[2];
   const threshold = parseFloat(match[3]);
-  const timeframe = match[4] || 'h6'; // default to h6
+  const timeframe = match[4] || 'h6';
 
-  // Get the right price change based on timeframe
   let priceChange = 0;
   switch (timeframe) {
     case 'h1': priceChange = state.solPriceChange_h1; break;
@@ -260,7 +299,6 @@ function evaluatePriceBased(condition: string, state: TriggerState): TriggerResu
       reason: `SOL ${direction === 'sol_drop' ? 'dropped' : 'rose'} ${absChange.toFixed(2)}% in ${timeframe} (threshold: ${threshold}%)`,
     };
   }
-
   return {
     triggered: false,
     reason: `SOL price change ${priceChange.toFixed(2)}% in ${timeframe}, threshold: ${direction} ${operator} ${threshold}%`,
@@ -317,13 +355,13 @@ function evaluateIdleTime(condition: string, state: TriggerState): TriggerResult
  * pocket_count: "active_pockets > 10"
  */
 function evaluatePocketCount(condition: string, state: TriggerState): TriggerResult {
-  const match = condition.match(/active_pockets\s*(>|<|>=|<=|==)\s*(\d+)/);
+  const match = condition.match(/(active_pockets|pocket_count)\s*(>|<|>=|<=|==)\s*(\d+)/);
   if (!match) {
     return { triggered: false, reason: `Invalid pocket_count condition: ${condition}` };
   }
 
-  const operator = match[1];
-  const threshold = parseInt(match[2]);
+  const operator = match[2];
+  const threshold = parseInt(match[3]);
   const count = state.activePocketCount;
 
   let met = false;

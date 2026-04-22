@@ -526,9 +526,15 @@ export async function executeTool(
       case 'check_route_status':
         result = await apiClient.getFundingStatus(input.request_id as string);
         break;
-      case 'retry_route':
-        result = await apiClient.getFundingStatus(input.request_id as string);
+      case 'retry_route': {
+        const retryId = input.request_id as string;
+        if (retryId.startsWith('sweep_')) {
+          result = await apiClient.resumeSweep(retryId);
+        } else {
+          result = { success: false, error: 'Retry only supported for sweep operations. Use recover_funding for funding issues.' };
+        }
         break;
+      }
 
       // Sweep
       case 'sweep_pocket':
@@ -604,9 +610,30 @@ export async function executeTool(
       case 'get_tier_info':
         result = await apiClient.getTierConfig();
         break;
-      case 'estimate_fee':
-        result = { success: true, data: { estimated: true, amount_sol: input.amount_sol } };
+      case 'estimate_fee': {
+        const amountSol = (input.amount_sol as number) || 0;
+        const tierInfo = context.systemStatus || {};
+        const tierName = tierInfo.tierName || 'FREE';
+        const feeRates: Record<string, number> = { FREE: 2.0, BASIC: 1.0, PRO: 0.5, ENTERPRISE: 0.25 };
+        const feePercent = feeRates[tierName] || 2.0;
+        const feeSol = amountSol * (feePercent / 100);
+        const complexityHops: Record<string, number> = { low: 6, medium: 10, high: 15 };
+        const hops = complexityHops[(input.complexity as string) || 'medium'] || 10;
+        const txFeeSol = (hops * 5000) / 1_000_000_000;
+        result = {
+          success: true,
+          data: {
+            amount_sol: amountSol,
+            fee_sol: feeSol,
+            fee_percent: feePercent,
+            tx_fee_sol: txFeeSol,
+            total_required: amountSol + feeSol + txFeeSol,
+            estimated_hops: hops,
+            tier: tierName,
+          },
+        };
         break;
+      }
       case 'health_check':
         result = await apiClient.health();
         break;

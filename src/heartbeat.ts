@@ -18,6 +18,7 @@ export class Heartbeat {
   private running: boolean;
   private lastBeat: string | null;
   private beatCount: number;
+  private quiet: boolean;
 
   constructor(
     intervalMinutes: number,
@@ -32,6 +33,7 @@ export class Heartbeat {
     this.running = false;
     this.lastBeat = null;
     this.beatCount = 0;
+    this.quiet = false;
   }
 
   start(): void {
@@ -65,6 +67,10 @@ export class Heartbeat {
     return this.beatCount;
   }
 
+  setQuiet(quiet: boolean): void {
+    this.quiet = quiet;
+  }
+
   getPriceMonitor(): PriceMonitor {
     return this.priceMonitor;
   }
@@ -74,7 +80,7 @@ export class Heartbeat {
 
     this.beatCount++;
     this.lastBeat = new Date().toISOString();
-    console.log(`[Heartbeat] Beat #${this.beatCount} at ${this.lastBeat}`);
+    if (!this.quiet) console.log(`[Heartbeat] Beat #${this.beatCount} at ${this.lastBeat}`);
 
     try {
       // Reset daily counters if needed
@@ -83,18 +89,18 @@ export class Heartbeat {
       // Get active strategies ready to evaluate
       const strategies = this.strategyEngine.getActiveStrategies();
       if (strategies.length === 0) {
-        console.log('[Heartbeat] No active strategies to evaluate');
+        if (!this.quiet) console.log('[Heartbeat] No active strategies to evaluate');
         return;
       }
 
-      console.log(`[Heartbeat] Evaluating ${strategies.length} active strategies`);
+      if (!this.quiet) console.log(`[Heartbeat] Evaluating ${strategies.length} active strategies`);
 
       // Fetch current state with real price data
       const triggerState = await fetchTriggerState(this.apiClient, this.priceMonitor);
 
       // Log price info
       if (triggerState.solPrice > 0) {
-        console.log(`[Heartbeat] SOL: $${triggerState.solPrice.toFixed(2)} (1h: ${triggerState.solPriceChange_h1.toFixed(2)}%, 6h: ${triggerState.solPriceChange_h6.toFixed(2)}%, 24h: ${triggerState.solPriceChange_h24.toFixed(2)}%)`);
+        if (!this.quiet) console.log(`[Heartbeat] SOL: $${triggerState.solPrice.toFixed(2)} (1h: ${triggerState.solPriceChange_h1.toFixed(2)}%, 6h: ${triggerState.solPriceChange_h6.toFixed(2)}%, 24h: ${triggerState.solPriceChange_h24.toFixed(2)}%)`);
       }
 
       // Evaluate each strategy
