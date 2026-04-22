@@ -116,15 +116,32 @@ async function actionSendP2P(
   params: Record<string, any>,
   apiClient: KausaLayerClient
 ): Promise<ActionResult> {
-  const res = await apiClient.sendToPocket(params.pocket_id, {
-    recipient_pocket_id: params.recipient_pocket_id,
-    amount_sol: params.amount_sol,
-  });
+  // Support single recipient or multiple recipients (payroll)
+  const recipients = params.recipients || [
+    { recipient_pocket_id: params.recipient_pocket_id, amount_sol: params.amount_sol },
+  ];
 
-  if (!res.success) {
-    return { success: false, message: `P2P send failed: ${res.error}` };
+  if (!params.pocket_id) {
+    return { success: false, message: 'No sender pocket_id specified' };
   }
-  return { success: true, message: `Sent ${params.amount_sol} SOL P2P`, data: res.data };
+
+  const results: string[] = [];
+  for (const recipient of recipients) {
+    const res = await apiClient.sendToPocket(params.pocket_id, {
+      recipient_pocket_id: recipient.recipient_pocket_id,
+      amount_sol: recipient.amount_sol,
+    });
+    results.push(res.success
+      ? `${recipient.recipient_pocket_id}: sent ${recipient.amount_sol} SOL`
+      : `${recipient.recipient_pocket_id}: ${res.error}`);
+  }
+
+  const successCount = results.filter((r) => r.includes('sent')).length;
+  return {
+    success: successCount > 0,
+    message: `P2P sent to ${successCount}/${recipients.length} recipients`,
+    data: results,
+  };
 }
 
 async function actionSwap(
@@ -132,22 +149,39 @@ async function actionSwap(
   matchedPockets: string[],
   apiClient: KausaLayerClient
 ): Promise<ActionResult> {
-  const pocketId = params.pocket_id || matchedPockets[0];
-  if (!pocketId) {
-    return { success: false, message: 'No pocket specified for swap' };
+  // Default mints: SOL -> USDC for panic/protection strategies
+  const inputMint = params.input_mint || 'SOL';
+  const outputMint = params.output_mint || 'USDC';
+  const slippageBps = params.slippage_bps || 300;
+
+  // Swap all matched pockets, or use pocket_id from params
+  const pocketsToSwap = matchedPockets.length > 0
+    ? matchedPockets
+    : params.pocket_id
+      ? [params.pocket_id]
+      : [];
+
+  if (pocketsToSwap.length === 0) {
+    return { success: false, message: 'No pockets specified for swap' };
   }
 
-  const res = await apiClient.swapExecute(pocketId, {
-    input_mint: params.input_mint,
-    output_mint: params.output_mint,
-    amount: params.amount,
-    slippage_bps: params.slippage_bps,
-  });
-
-  if (!res.success) {
-    return { success: false, message: `Swap failed: ${res.error}` };
+  const results: string[] = [];
+  for (const pocketId of pocketsToSwap) {
+    const res = await apiClient.swapExecute(pocketId, {
+      input_mint: inputMint,
+      output_mint: outputMint,
+      amount: params.amount || 0,
+      slippage_bps: slippageBps,
+    });
+    results.push(res.success ? `${pocketId}: swapped` : `${pocketId}: ${res.error}`);
   }
-  return { success: true, message: `Swap executed on pocket ${pocketId}`, data: res.data };
+
+  const successCount = results.filter((r) => r.includes('swapped')).length;
+  return {
+    success: successCount > 0,
+    message: `Swapped ${successCount}/${pocketsToSwap.length} pockets (${inputMint} -> ${outputMint})`,
+    data: results,
+  };
 }
 
 async function actionRecover(

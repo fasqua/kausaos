@@ -446,6 +446,25 @@ export const allTools: ToolDefinition[] = [
     },
   },
   {
+    name: 'update_strategy',
+    description: 'Update an existing strategy. Change trigger condition, action, limits, or other parameters without deleting and recreating.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        strategy_id: { type: 'string', description: 'Strategy ID to update' },
+        name: { type: 'string', description: 'New name' },
+        trigger_type: { type: 'string', enum: ['balance_threshold', 'time_based', 'price_based', 'status_based', 'idle_time', 'pocket_count'], description: 'New trigger type' },
+        trigger_condition: { type: 'string', description: 'New trigger condition' },
+        trigger_interval_seconds: { type: 'number', description: 'New check interval' },
+        action_type: { type: 'string', enum: ['create_pocket', 'sweep', 'sweep_all', 'send_p2p', 'swap', 'recover', 'notify'], description: 'New action type' },
+        action_params: { type: 'object', description: 'New action parameters' },
+        max_executions_per_day: { type: 'number', description: 'New daily limit' },
+        cooldown_minutes: { type: 'number', description: 'New cooldown period' },
+      },
+      required: ['strategy_id'],
+    },
+  },
+  {
     name: 'get_strategy_logs',
     description: 'Get execution logs for a strategy: when it triggered, what it did, results.',
     input_schema: {
@@ -684,6 +703,25 @@ export async function executeTool(
         if (context.strategyEngine) {
           const deleted = context.strategyEngine.deleteStrategy(input.strategy_id as string);
           result = { success: deleted, data: { deleted }, error: deleted ? undefined : 'Strategy not found' };
+        } else {
+          result = { success: false, error: 'Strategy engine not available' };
+        }
+        break;
+      case 'update_strategy':
+        if (context.strategyEngine) {
+          const updated = context.strategyEngine.updateStrategy(input.strategy_id as string, {
+            name: input.name as string | undefined,
+            trigger_type: input.trigger_type as any,
+            trigger_condition: input.trigger_condition as string | undefined,
+            trigger_interval_seconds: input.trigger_interval_seconds as number | undefined,
+            action_type: input.action_type as any,
+            action_params: input.action_params as any,
+            max_executions_per_day: input.max_executions_per_day as number | undefined,
+            cooldown_minutes: input.cooldown_minutes as number | undefined,
+          });
+          result = updated
+            ? { success: true, data: updated }
+            : { success: false, error: 'Strategy not found' };
         } else {
           result = { success: false, error: 'Strategy engine not available' };
         }

@@ -71,5 +71,16 @@ Multi-condition (AND/OR):
 - "idle > 6h OR pocket.balance < 0.01"
 
 Always use these exact formats. Do not invent alternative formats.
+
+## Strategy Action Parameters
+When creating strategies, use these action_params for each action_type:
+
+sweep: { destination_slot: 1 } or { destination: "wallet_address" }
+sweep_all: { destination_slot: 1 } or { destination: "wallet_address" }
+swap: { input_mint: "SOL", output_mint: "USDC" } (defaults to SOL->USDC if omitted)
+send_p2p: { pocket_id: "sender_pocket", recipient_pocket_id: "receiver_pocket", amount_sol: 0.1 } (single) or { pocket_id: "sender_pocket", recipients: [{ recipient_pocket_id: "pocket_alice", amount_sol: 10 }, { recipient_pocket_id: "pocket_bob", amount_sol: 10 }] } (payroll)
+create_pocket: { amount_sol: 0.1, label: "name", complexity: "medium" }
+recover: {} (no params needed, operates on matched pockets)
+notify: { message: "custom message" } (optional)
 `;
 }

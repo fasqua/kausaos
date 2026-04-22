@@ -166,6 +166,38 @@ export class StrategyEngine {
     return result.changes > 0;
   }
 
+  updateStrategy(id: string, params: {
+    name?: string;
+    trigger_type?: TriggerType;
+    trigger_condition?: string;
+    trigger_interval_seconds?: number;
+    action_type?: ActionType;
+    action_params?: Record<string, any>;
+    max_executions_per_day?: number;
+    cooldown_minutes?: number;
+  }): Strategy | null {
+    const existing = this.getStrategy(id);
+    if (!existing) return null;
+
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    if (params.name !== undefined) { fields.push('name = ?'); values.push(params.name); }
+    if (params.trigger_type !== undefined) { fields.push('trigger_type = ?'); values.push(params.trigger_type); }
+    if (params.trigger_condition !== undefined) { fields.push('trigger_condition = ?'); values.push(params.trigger_condition); }
+    if (params.trigger_interval_seconds !== undefined) { fields.push('trigger_interval_seconds = ?'); values.push(params.trigger_interval_seconds); }
+    if (params.action_type !== undefined) { fields.push('action_type = ?'); values.push(params.action_type); }
+    if (params.action_params !== undefined) { fields.push('action_params = ?'); values.push(JSON.stringify(params.action_params)); }
+    if (params.max_executions_per_day !== undefined) { fields.push('max_executions_per_day = ?'); values.push(params.max_executions_per_day); }
+    if (params.cooldown_minutes !== undefined) { fields.push('cooldown_minutes = ?'); values.push(params.cooldown_minutes); }
+
+    if (fields.length === 0) return existing;
+
+    values.push(id);
+    this.db.prepare(`UPDATE strategies SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return this.getStrategy(id);
+  }
+
   // Get active strategies ready to evaluate
   getActiveStrategies(): Strategy[] {
     const strategies = this.listStrategies('active');
