@@ -126,6 +126,7 @@ async function syncBrainContext(
       activePockets,
       activeStrategies: strategies.length,
       lastHeartbeat: heartbeat.getLastBeat(),
+      pendingOperations: heartbeat.getPendingOperations(),
       tierName: tierInfo.tier,
     });
 

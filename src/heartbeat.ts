@@ -6,6 +6,7 @@
 import { StrategyEngine } from './strategy/engine';
 import { evaluateTrigger, fetchTriggerState } from './strategy/triggers';
 import { executeAction } from './strategy/actions';
+import { ExecutionPipeline } from './executor/pipeline';
 import { KausaLayerClient } from './brain/api-client';
 import { PriceMonitor } from './monitor/price';
 
@@ -19,6 +20,7 @@ export class Heartbeat {
   private lastBeat: string | null;
   private beatCount: number;
   private quiet: boolean;
+  private pipeline: ExecutionPipeline;
 
   constructor(
     intervalMinutes: number,
@@ -34,6 +36,7 @@ export class Heartbeat {
     this.lastBeat = null;
     this.beatCount = 0;
     this.quiet = false;
+    this.pipeline = new ExecutionPipeline();
   }
 
   start(): void {
@@ -73,6 +76,10 @@ export class Heartbeat {
 
   getPriceMonitor(): PriceMonitor {
     return this.priceMonitor;
+  }
+
+  getPendingOperations(): number {
+    return this.pipeline.getPendingCount();
   }
 
   private async beat(): Promise<void> {
@@ -120,7 +127,7 @@ export class Heartbeat {
           if (triggerResult.triggered) {
             console.log(`[Heartbeat] Strategy "${strategy.name}" TRIGGERED: ${triggerResult.reason}`);
 
-            const actionResult = await executeAction(
+            const pipelineResult = await this.pipeline.run(
               strategy,
               triggerResult,
               this.apiClient,
@@ -130,11 +137,12 @@ export class Heartbeat {
             this.strategyEngine.logExecution(
               strategy.id,
               triggerResult.reason,
-              actionResult.message,
-              actionResult.success
+              pipelineResult.message,
+              pipelineResult.success
             );
 
-            console.log(`[Heartbeat] Strategy "${strategy.name}" action: ${actionResult.message}`);
+            console.log(`[Heartbeat] Strategy "${strategy.name}" [${pipelineResult.stage}]: ${pipelineResult.message}`);
+
           }
         } catch (err: any) {
           console.error(`[Heartbeat] Error evaluating strategy "${strategy.name}": ${err.message}`);
@@ -145,6 +153,12 @@ export class Heartbeat {
             false
           );
         }
+      }
+
+      // Detect anomalies: operations stuck > 10 minutes
+      const anomalies = this.pipeline.detectAnomalies();
+      if (anomalies.length > 0) {
+        console.log(`[Heartbeat] ANOMALY: ${anomalies.length} operation(s) stuck > 10 minutes`);
       }
     } catch (err: any) {
       console.error(`[Heartbeat] Beat error: ${err.message}`);
