@@ -623,9 +623,18 @@ export async function executeTool(
       case 'get_usage_stats':
         result = await apiClient.getUsageStats();
         break;
-      case 'get_route_history':
-        result = await apiClient.getRouteHistory();
+      case 'get_route_history': {
+        const historyRes = await apiClient.getRouteHistory();
+        if (historyRes.success && historyRes.data?.routes) {
+          historyRes.data.routes = historyRes.data.routes.map((r: any) => ({
+            ...r,
+            created_at_date: r.created_at ? new Date(r.created_at * 1000).toISOString() : null,
+            completed_at_date: r.completed_at ? new Date(r.completed_at * 1000).toISOString() : null,
+          }));
+        }
+        result = historyRes;
         break;
+      }
       case 'get_tier_info':
         result = await apiClient.getTierConfig();
         break;
