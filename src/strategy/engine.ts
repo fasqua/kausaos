@@ -11,7 +11,7 @@ function generateId(): string {
   return `strat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export type TriggerType = 'balance_threshold' | 'time_based' | 'price_based' | 'status_based' | 'idle_time' | 'pocket_count';
+export type TriggerType = 'balance_threshold' | 'time_based' | 'price_based' | 'status_based' | 'idle_time' | 'pocket_count' | 'token_price';
 export type ActionType = 'create_pocket' | 'sweep' | 'sweep_all' | 'send_p2p' | 'swap' | 'recover' | 'notify';
 export type StrategyStatus = 'active' | 'paused' | 'deleted';
 
@@ -80,6 +80,44 @@ export class StrategyEngine {
 
       CREATE TABLE IF NOT EXISTS daily_reset (
         last_reset TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS trade_history (
+        id TEXT PRIMARY KEY,
+        pocket_id TEXT NOT NULL,
+        token_mint TEXT NOT NULL,
+        token_symbol TEXT NOT NULL,
+        side TEXT NOT NULL,
+        amount_sol REAL NOT NULL,
+        amount_token REAL NOT NULL,
+        price_usd REAL NOT NULL,
+        tx_signature TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS portfolio_positions (
+        pocket_id TEXT NOT NULL,
+        token_mint TEXT NOT NULL,
+        token_symbol TEXT NOT NULL,
+        total_amount_token REAL DEFAULT 0,
+        total_invested_sol REAL DEFAULT 0,
+        average_buy_price_usd REAL DEFAULT 0,
+        last_updated TEXT,
+        PRIMARY KEY (pocket_id, token_mint)
+      );
+
+      CREATE TABLE IF NOT EXISTS trade_rules (
+        id TEXT PRIMARY KEY,
+        pocket_id TEXT NOT NULL,
+        token_mint TEXT NOT NULL,
+        token_symbol TEXT NOT NULL,
+        take_profit_pct REAL,
+        stop_loss_pct REAL,
+        dca_interval_minutes INTEGER,
+        dca_amount_sol REAL,
+        status TEXT DEFAULT 'active',
+        last_dca_at TEXT,
+        created_at TEXT NOT NULL
       );
     `);
   }
@@ -239,6 +277,151 @@ export class StrategyEngine {
     return this.db.prepare(
       'SELECT * FROM strategy_logs WHERE strategy_id = ? ORDER BY triggered_at DESC LIMIT ?'
     ).all(strategyId, limit) as StrategyLog[];
+  }
+
+
+  // ============ TRADE HISTORY ============
+
+  recordTrade(params: {
+    pocket_id: string;
+    token_mint: string;
+    token_symbol: string;
+    side: 'buy' | 'sell';
+    amount_sol: number;
+    amount_token: number;
+    price_usd: number;
+    tx_signature?: string;
+  }): void {
+    const id = `trade_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+
+    this.db.prepare(`
+      INSERT INTO trade_history (id, pocket_id, token_mint, token_symbol, side, amount_sol, amount_token, price_usd, tx_signature, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, params.pocket_id, params.token_mint, params.token_symbol, params.side, params.amount_sol, params.amount_token, params.price_usd, params.tx_signature || null, now);
+
+    // Update portfolio position
+    this.updatePosition(params.pocket_id, params.token_mint, params.token_symbol, params.side, params.amount_sol, params.amount_token, params.price_usd);
+  }
+
+  private updatePosition(
+    pocketId: string, tokenMint: string, tokenSymbol: string,
+    side: 'buy' | 'sell', amountSol: number, amountToken: number, priceUsd: number
+  ): void {
+    const now = new Date().toISOString();
+    const existing = this.db.prepare(
+      'SELECT * FROM portfolio_positions WHERE pocket_id = ? AND token_mint = ?'
+    ).get(pocketId, tokenMint) as any;
+
+    if (side === 'buy') {
+      if (existing) {
+        const newTotalToken = existing.total_amount_token + amountToken;
+        const newTotalInvested = existing.total_invested_sol + amountSol;
+        const newAvgPrice = newTotalInvested > 0 ? (existing.average_buy_price_usd * existing.total_invested_sol + priceUsd * amountSol) / newTotalInvested : priceUsd;
+        this.db.prepare(`
+          UPDATE portfolio_positions SET total_amount_token = ?, total_invested_sol = ?, average_buy_price_usd = ?, last_updated = ?
+          WHERE pocket_id = ? AND token_mint = ?
+        `).run(newTotalToken, newTotalInvested, newAvgPrice, now, pocketId, tokenMint);
+      } else {
+        this.db.prepare(`
+          INSERT INTO portfolio_positions (pocket_id, token_mint, token_symbol, total_amount_token, total_invested_sol, average_buy_price_usd, last_updated)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(pocketId, tokenMint, tokenSymbol, amountToken, amountSol, priceUsd, now);
+      }
+    } else {
+      // sell
+      if (existing) {
+        const newTotalToken = Math.max(0, existing.total_amount_token - amountToken);
+        const ratio = existing.total_amount_token > 0 ? amountToken / existing.total_amount_token : 1;
+        const soldInvestment = existing.total_invested_sol * ratio;
+        const newTotalInvested = Math.max(0, existing.total_invested_sol - soldInvestment);
+        this.db.prepare(`
+          UPDATE portfolio_positions SET total_amount_token = ?, total_invested_sol = ?, last_updated = ?
+          WHERE pocket_id = ? AND token_mint = ?
+        `).run(newTotalToken, newTotalInvested, now, pocketId, tokenMint);
+      }
+    }
+  }
+
+  getTradeHistory(pocketId?: string, limit: number = 50): any[] {
+    if (pocketId) {
+      return this.db.prepare(
+        'SELECT * FROM trade_history WHERE pocket_id = ? ORDER BY created_at DESC LIMIT ?'
+      ).all(pocketId, limit);
+    }
+    return this.db.prepare(
+      'SELECT * FROM trade_history ORDER BY created_at DESC LIMIT ?'
+    ).all(limit);
+  }
+
+  getPortfolioPositions(pocketId?: string): any[] {
+    if (pocketId) {
+      return this.db.prepare(
+        'SELECT * FROM portfolio_positions WHERE pocket_id = ? AND total_amount_token > 0'
+      ).all(pocketId);
+    }
+    return this.db.prepare(
+      'SELECT * FROM portfolio_positions WHERE total_amount_token > 0'
+    ).all();
+  }
+
+  getPosition(pocketId: string, tokenMint: string): any | null {
+    return this.db.prepare(
+      'SELECT * FROM portfolio_positions WHERE pocket_id = ? AND token_mint = ?'
+    ).get(pocketId, tokenMint) || null;
+  }
+
+  // ============ TRADE RULES ============
+
+  createTradeRule(params: {
+    pocket_id: string;
+    token_mint: string;
+    token_symbol: string;
+    take_profit_pct?: number;
+    stop_loss_pct?: number;
+    dca_interval_minutes?: number;
+    dca_amount_sol?: number;
+  }): any {
+    const id = `rule_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+
+    this.db.prepare(`
+      INSERT OR REPLACE INTO trade_rules (id, pocket_id, token_mint, token_symbol, take_profit_pct, stop_loss_pct, dca_interval_minutes, dca_amount_sol, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+    `).run(id, params.pocket_id, params.token_mint, params.token_symbol, params.take_profit_pct || null, params.stop_loss_pct || null, params.dca_interval_minutes || null, params.dca_amount_sol || null, now);
+
+    return this.getTradeRule(id);
+  }
+
+  getTradeRule(id: string): any | null {
+    return this.db.prepare('SELECT * FROM trade_rules WHERE id = ? AND status != ?').get(id, 'deleted') || null;
+  }
+
+  listTradeRules(pocketId?: string): any[] {
+    if (pocketId) {
+      return this.db.prepare(
+        "SELECT * FROM trade_rules WHERE pocket_id = ? AND status != 'deleted'"
+      ).all(pocketId);
+    }
+    return this.db.prepare(
+      "SELECT * FROM trade_rules WHERE status != 'deleted'"
+    ).all();
+  }
+
+  getActiveTradeRules(): any[] {
+    return this.db.prepare(
+      "SELECT * FROM trade_rules WHERE status = 'active'"
+    ).all();
+  }
+
+  deleteTradeRule(id: string): boolean {
+    const result = this.db.prepare("UPDATE trade_rules SET status = 'deleted' WHERE id = ?").run(id);
+    return result.changes > 0;
+  }
+
+  updateTradeRuleDcaTime(id: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare('UPDATE trade_rules SET last_dca_at = ? WHERE id = ?').run(now, id);
   }
 
   close(): void {

@@ -61,7 +61,7 @@ export class KausaLayerClient {
       const data = response.data;
       if (data.valid && data.wallet_address) {
         this.walletAddress = data.wallet_address;
-        this.metaAddress = crypto.createHash('sha256').update(data.wallet_address).digest('hex');
+        this.metaAddress = data.meta_address || crypto.createHash('sha256').update(data.wallet_address).digest('hex');
         console.log(`[API] Authenticated. Wallet: ${this.walletAddress.slice(0, 8)}...`);
       } else {
         throw new Error('Invalid API key or wallet not found');
@@ -336,6 +336,7 @@ export class KausaLayerClient {
     output_mint: string;
     amount: number;
     slippage_bps?: number;
+    amount_raw?: number;
   }): Promise<ApiResponse> {
     return this.request('post', `/pocket/${pocketId}/swap`, params);
   }

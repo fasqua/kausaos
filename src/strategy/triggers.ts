@@ -8,6 +8,7 @@ import { Strategy, TriggerType } from './engine';
 import { KausaLayerClient } from '../brain/api-client';
 import { PriceMonitor } from '../monitor/price';
 import { OperationsMonitor } from '../monitor/operations';
+import { TokenPriceMonitor, TokenPriceInfo } from '../monitor/token-price';
 
 export interface TriggerState {
   pockets: Array<{
@@ -23,6 +24,15 @@ export interface TriggerState {
   solPriceChange_h24: number;
   activePocketCount: number;
   pendingOperations: number;
+  portfolioPositions: Array<{
+    pocket_id: string;
+    token_mint: string;
+    token_symbol: string;
+    total_amount_token: number;
+    total_invested_sol: number;
+    average_buy_price_usd: number;
+  }>;
+  tokenPrices: Map<string, TokenPriceInfo>;
 }
 
 export interface TriggerResult {
@@ -118,6 +128,7 @@ function detectTriggerType(condition: string): TriggerType {
   if (condition.includes('funding_status') || condition.includes('failed')) return 'status_based';
   if (condition.includes('idle')) return 'idle_time';
   if (condition.includes('active_pockets') || condition.includes('pocket_count')) return 'pocket_count';
+  if (condition.includes('token_up') || condition.includes('token_down') || condition.includes('token_price')) return 'token_price';
   return 'balance_threshold'; // default
 }
 
@@ -142,6 +153,8 @@ async function evaluateSingleTrigger(
       return evaluateIdleTime(condition, state);
     case 'pocket_count':
       return evaluatePocketCount(condition, state);
+    case 'token_price':
+      return evaluateTokenPrice(condition, state);
     default:
       return { triggered: false, reason: `Unknown trigger type: ${triggerType}` };
   }
@@ -380,13 +393,94 @@ function evaluatePocketCount(condition: string, state: TriggerState): TriggerRes
   return { triggered: false, reason: `Active pockets: ${count}, condition: ${condition}` };
 }
 
+
+/**
+ * token_price: "token_up BONK > 50" or "token_down WIF > 30"
+ * Compares current price vs average buy price from portfolio
+ * Format: token_up|token_down SYMBOL operator threshold
+ */
+function evaluateTokenPrice(condition: string, state: TriggerState): TriggerResult {
+  // Format: "token_up BONK > 50" or "token_down WIF > 30"
+  const match = condition.match(/(token_up|token_down|token_price)\s+(\w+)\s*(>|<|>=|<=)\s*([\d.]+)/);
+  if (!match) {
+    return { triggered: false, reason: `Invalid token_price condition: ${condition}` };
+  }
+
+  const direction = match[1];
+  const symbol = match[2].toUpperCase();
+  const operator = match[3];
+  const threshold = parseFloat(match[4]);
+
+  // Find position by symbol
+  const position = state.portfolioPositions.find(
+    (p) => p.token_symbol.toUpperCase() === symbol
+  );
+
+  if (!position) {
+    return { triggered: false, reason: `No position found for ${symbol}` };
+  }
+
+  if (position.average_buy_price_usd <= 0) {
+    return { triggered: false, reason: `No average buy price for ${symbol}` };
+  }
+
+  // Find current price
+  const priceInfo = state.tokenPrices.get(position.token_mint);
+  if (!priceInfo || priceInfo.price_usd === 0) {
+    return { triggered: false, reason: `No price data for ${symbol}` };
+  }
+
+  const changePct = ((priceInfo.price_usd - position.average_buy_price_usd) / position.average_buy_price_usd) * 100;
+  const absChange = Math.abs(changePct);
+
+  let met = false;
+
+  if (direction === 'token_up' && changePct > 0) {
+    switch (operator) {
+      case '>': met = absChange > threshold; break;
+      case '<': met = absChange < threshold; break;
+      case '>=': met = absChange >= threshold; break;
+      case '<=': met = absChange <= threshold; break;
+    }
+  } else if (direction === 'token_down' && changePct < 0) {
+    switch (operator) {
+      case '>': met = absChange > threshold; break;
+      case '<': met = absChange < threshold; break;
+      case '>=': met = absChange >= threshold; break;
+      case '<=': met = absChange <= threshold; break;
+    }
+  } else if (direction === 'token_price') {
+    // Generic: compare raw change %
+    switch (operator) {
+      case '>': met = changePct > threshold; break;
+      case '<': met = changePct < threshold; break;
+      case '>=': met = changePct >= threshold; break;
+      case '<=': met = changePct <= threshold; break;
+    }
+  }
+
+  if (met) {
+    return {
+      triggered: true,
+      reason: `${symbol} ${changePct >= 0 ? 'up' : 'down'} ${absChange.toFixed(1)}% from avg buy $${position.average_buy_price_usd.toFixed(6)} (current: $${priceInfo.price_usd.toFixed(6)})`,
+      matchedPockets: [position.pocket_id],
+    };
+  }
+  return {
+    triggered: false,
+    reason: `${symbol} change ${changePct.toFixed(1)}% from avg buy, threshold: ${direction} ${operator} ${threshold}%`,
+  };
+}
+
 /**
  * Fetch current trigger state from API + real price data
  */
 export async function fetchTriggerState(
   apiClient: KausaLayerClient,
   priceMonitor?: PriceMonitor,
-  opsMonitor?: OperationsMonitor
+  opsMonitor?: OperationsMonitor,
+  strategyEngine?: any,
+  tokenPriceMonitor?: TokenPriceMonitor
 ): Promise<TriggerState> {
   // Get pockets
   const pocketsRes = await apiClient.listPockets();
@@ -428,6 +522,8 @@ export async function fetchTriggerState(
     solPriceChange_h24,
     activePocketCount,
     pendingOperations: await getPendingCount(apiClient, opsMonitor),
+    portfolioPositions: [],
+    tokenPrices: new Map(),
   };
 }
 

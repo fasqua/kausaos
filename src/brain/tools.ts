@@ -492,6 +492,66 @@ export const allTools: ToolDefinition[] = [
     description: 'Get KausaOS system status: uptime, active strategies, last heartbeat, pending operations.',
     input_schema: { type: 'object', properties: {} },
   },
+  // --- Portfolio & Trading (4) ---
+  {
+    name: 'portfolio_summary',
+    description: 'Get portfolio summary: all token positions with PnL, average buy price, and current value. Shows unrealized profit/loss for each token held in pockets.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pocket_id: { type: 'string', description: 'Optional: filter by pocket ID' },
+      },
+    },
+  },
+  {
+    name: 'get_trade_history',
+    description: 'Get history of all token swaps (buys and sells) with entry prices and amounts.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pocket_id: { type: 'string', description: 'Optional: filter by pocket ID' },
+        limit: { type: 'number', description: 'Number of trades to return (default: 50)' },
+      },
+    },
+  },
+  {
+    name: 'set_trade_rule',
+    description: 'Set take profit, stop loss, or DCA rule for a token position. Rules are evaluated on heartbeat. Take profit/stop loss percentage is relative to average buy price.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pocket_id: { type: 'string', description: 'Pocket ID holding the token' },
+        token_mint: { type: 'string', description: 'Token mint address' },
+        token_symbol: { type: 'string', description: 'Token symbol (e.g., BONK, WIF)' },
+        take_profit_pct: { type: 'number', description: 'Sell when price rises this % above average buy (e.g., 100 = sell at 2x)' },
+        stop_loss_pct: { type: 'number', description: 'Sell when price drops this % below average buy (e.g., 30 = sell at -30%)' },
+        dca_interval_minutes: { type: 'number', description: 'DCA interval: swap every N minutes' },
+        dca_amount_sol: { type: 'number', description: 'DCA amount: SOL to swap each interval' },
+      },
+      required: ['pocket_id', 'token_mint', 'token_symbol'],
+    },
+  },
+  {
+    name: 'remove_trade_rule',
+    description: 'Remove a take profit, stop loss, or DCA rule.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        rule_id: { type: 'string', description: 'Trade rule ID to remove' },
+      },
+      required: ['rule_id'],
+    },
+  },
+  {
+    name: 'sync_portfolio',
+    description: 'Sync portfolio positions from on-chain data. Scans all active pockets for token balances and updates portfolio tracker. Run this when starting KausaOS for the first time or to refresh positions.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pocket_id: { type: 'string', description: 'Optional: sync only a specific pocket' },
+      },
+    },
+  },
 ];
 
 // ============================================================
@@ -501,7 +561,7 @@ export const allTools: ToolDefinition[] = [
 export async function executeTool(
   toolCall: ToolCall,
   apiClient: KausaLayerClient,
-  context: { strategies?: any; systemStatus?: any; priceData?: any; strategyEngine?: any }
+  context: { strategies?: any; systemStatus?: any; priceData?: any; strategyEngine?: any; tokenPriceMonitor?: any }
 ): Promise<string> {
   const { name, input } = toolCall;
 
@@ -590,9 +650,32 @@ export async function executeTool(
       case 'swap_quote':
         result = await apiClient.swapQuote(input.pocket_id as string, input as any);
         break;
-      case 'swap_execute':
+      case 'swap_execute': {
         result = await apiClient.swapExecute(input.pocket_id as string, input as any);
+        // Record trade in portfolio tracker
+        if (result.success && result.data && context.strategyEngine) {
+          try {
+            const swapData = result.data.swap_result || result.data;
+            const inputMint = input.input_mint as string || 'SOL';
+            const outputMint = input.output_mint as string || '';
+            const amountSol = (input.amount as number) || 0;
+            const isBuy = inputMint === 'SOL' || inputMint === 'So11111111111111111111111111111111111111112';
+            context.strategyEngine.recordTrade({
+              pocket_id: input.pocket_id as string,
+              token_mint: isBuy ? outputMint : inputMint,
+              token_symbol: (swapData.output_symbol || swapData.input_symbol || outputMint || '').toUpperCase(),
+              side: isBuy ? 'buy' : 'sell',
+              amount_sol: amountSol,
+              amount_token: parseFloat(swapData.out_amount || swapData.in_amount || '0'),
+              price_usd: parseFloat(swapData.price_usd || '0'),
+              tx_signature: swapData.tx_signature || null,
+            });
+          } catch (err: any) {
+            console.warn('[Tools] Trade recording failed:', err.message);
+          }
+        }
         break;
+      }
 
       // Wallet
       case 'list_wallets':
@@ -757,6 +840,144 @@ export async function executeTool(
           data: context.systemStatus || { status: 'running', strategies: 0, last_heartbeat: null },
         };
         break;
+
+      // Portfolio & Trading
+      case 'portfolio_summary': {
+        if (context.strategyEngine) {
+          const positions = context.strategyEngine.getPortfolioPositions(input.pocket_id as string | undefined);
+          if (positions.length === 0) {
+            result = { success: true, data: { positions: [], message: 'No positions found. Positions are tracked when swaps are executed.' } };
+          } else {
+            // Fetch current prices for PnL
+            const tokenPriceMonitor = context.tokenPriceMonitor;
+            const enriched = [];
+            for (const pos of positions) {
+              let pnl = null;
+              if (tokenPriceMonitor) {
+                pnl = await tokenPriceMonitor.calculatePnL(
+                  pos.token_mint, pos.average_buy_price_usd, pos.total_amount_token, pos.total_invested_sol
+                );
+              }
+              enriched.push({
+                ...pos,
+                current_price_usd: pnl?.current_price_usd || null,
+                pnl_pct: pnl?.pnl_pct || null,
+                unrealized_value_usd: pnl?.unrealized_value_usd || null,
+              });
+            }
+            result = { success: true, data: { positions: enriched, count: enriched.length } };
+          }
+        } else {
+          result = { success: false, error: 'Strategy engine not available' };
+        }
+        break;
+      }
+      case 'get_trade_history': {
+        if (context.strategyEngine) {
+          const trades = context.strategyEngine.getTradeHistory(
+            input.pocket_id as string | undefined,
+            (input.limit as number) || 50
+          );
+          result = { success: true, data: { trades, count: trades.length } };
+        } else {
+          result = { success: false, error: 'Strategy engine not available' };
+        }
+        break;
+      }
+      case 'set_trade_rule': {
+        if (context.strategyEngine) {
+          const rule = context.strategyEngine.createTradeRule({
+            pocket_id: input.pocket_id as string,
+            token_mint: input.token_mint as string,
+            token_symbol: input.token_symbol as string,
+            take_profit_pct: input.take_profit_pct as number | undefined,
+            stop_loss_pct: input.stop_loss_pct as number | undefined,
+            dca_interval_minutes: input.dca_interval_minutes as number | undefined,
+            dca_amount_sol: input.dca_amount_sol as number | undefined,
+          });
+          result = { success: true, data: rule };
+        } else {
+          result = { success: false, error: 'Strategy engine not available' };
+        }
+        break;
+      }
+      case 'remove_trade_rule': {
+        if (context.strategyEngine) {
+          const deleted = context.strategyEngine.deleteTradeRule(input.rule_id as string);
+          result = { success: deleted, data: { deleted }, error: deleted ? undefined : 'Rule not found' };
+        } else {
+          result = { success: false, error: 'Strategy engine not available' };
+        }
+        break;
+      }
+
+      case 'sync_portfolio': {
+        if (context.strategyEngine && context.tokenPriceMonitor) {
+          try {
+            const pocketsRes = await apiClient.listPockets();
+            const pockets = pocketsRes.success && pocketsRes.data
+              ? (Array.isArray(pocketsRes.data) ? pocketsRes.data : pocketsRes.data.pockets || [])
+              : [];
+
+            const activePockets = pockets.filter((p: any) => p.status === 'active');
+            const targetPockets = input.pocket_id
+              ? activePockets.filter((p: any) => (p.id || p.pocket_id) === input.pocket_id)
+              : activePockets;
+
+            let synced = 0;
+            let tokensFound = 0;
+
+            for (const pocket of targetPockets) {
+              const pid = pocket.id || pocket.pocket_id;
+              const balRes = await apiClient.getTokenBalances(pid);
+              if (!balRes.success || !balRes.data) continue;
+
+              const tokens = balRes.data.tokens || [];
+              for (const token of tokens) {
+                if (!token.mint || token.balance_formatted <= 0) continue;
+
+                const existing = context.strategyEngine.getPosition(pid, token.mint);
+                if (existing) {
+                  // Update token amount only, keep average buy price
+                  continue;
+                }
+
+                // New token not in portfolio — fetch price and add
+                const priceInfo = await context.tokenPriceMonitor.getTokenPrice(token.mint);
+                const priceUsd = priceInfo?.price_usd || 0;
+
+                context.strategyEngine.recordTrade({
+                  pocket_id: pid,
+                  token_mint: token.mint,
+                  token_symbol: token.symbol || 'UNKNOWN',
+                  side: 'buy',
+                  amount_sol: 0,
+                  amount_token: token.balance_formatted,
+                  price_usd: priceUsd,
+                });
+                tokensFound++;
+              }
+              synced++;
+            }
+
+            result = {
+              success: true,
+              data: {
+                pockets_scanned: synced,
+                new_tokens_found: tokensFound,
+                message: tokensFound > 0
+                  ? `Synced ${synced} pocket(s), found ${tokensFound} new token position(s). Note: entry price set to current market price for pre-existing tokens.`
+                  : `Synced ${synced} pocket(s), no new tokens found.`,
+              },
+            };
+          } catch (err: any) {
+            result = { success: false, error: `Sync failed: ${err.message}` };
+          }
+        } else {
+          result = { success: false, error: 'Strategy engine or token price monitor not available' };
+        }
+        break;
+      }
 
       default:
         result = { success: false, error: `Unknown tool: ${name}` };

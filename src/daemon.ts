@@ -12,7 +12,7 @@ import { StrategyEngine } from './strategy';
 import { Heartbeat } from './heartbeat';
 import { TerminalChannel } from './channels';
 import { Notifier } from './notify';
-import { PriceMonitor } from './monitor';
+import { PriceMonitor, TokenPriceMonitor } from './monitor';
 
 const BANNER = `
  _  __                       ___  ____  
@@ -63,6 +63,10 @@ async function main(): Promise<void> {
 
   // Connect strategy engine to brain
   brain.setStrategyEngine(strategyEngine);
+
+  // Initialize token price monitor for portfolio PnL
+  const tokenPriceMonitor = new TokenPriceMonitor();
+  brain.setTokenPriceMonitor(tokenPriceMonitor);
 
   // Initialize heartbeat
   const heartbeat = new Heartbeat(

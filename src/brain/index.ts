@@ -23,6 +23,7 @@ export class Brain {
   private maxToolLoops: number;
   private priceData: any;
   private strategyEngine: any;
+  private tokenPriceMonitor: any;
 
   constructor(options: BrainOptions) {
     this.llm = createLlmProvider(options.config.llm);
@@ -32,6 +33,7 @@ export class Brain {
     this.maxToolLoops = 10;
     this.priceData = null;
     this.strategyEngine = null;
+    this.tokenPriceMonitor = null;
     this.systemContext = {
       activePockets: 0,
       activeStrategies: 0,
@@ -51,6 +53,10 @@ export class Brain {
 
   setStrategyEngine(engine: any): void {
     this.strategyEngine = engine;
+  }
+
+  setTokenPriceMonitor(monitor: any): void {
+    this.tokenPriceMonitor = monitor;
   }
 
   setPriceData(data: any): void {
@@ -145,6 +151,7 @@ export class Brain {
           systemStatus: this.systemContext,
           priceData: this.priceData,
           strategyEngine: this.strategyEngine,
+          tokenPriceMonitor: this.tokenPriceMonitor,
         });
 
         // Add assistant message with tool call indication
