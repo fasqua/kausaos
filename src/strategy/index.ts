@@ -3,7 +3,7 @@
  */
 
 export { StrategyEngine } from './engine';
-export type { Strategy, StrategyLog, TriggerType, ActionType, StrategyStatus } from './engine';
+export type { Strategy, StrategyLog, TelegramUser, TriggerType, ActionType, StrategyStatus } from './engine';
 export { evaluateTrigger, fetchTriggerState } from './triggers';
 export type { TriggerState, TriggerResult } from './triggers';
 export { executeAction } from './actions';

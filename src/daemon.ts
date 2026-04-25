@@ -1,6 +1,7 @@
-/**
 import dotenv from 'dotenv';
 dotenv.config();
+
+/**
  * KausaOS - Daemon Manager
  * Main entry point. Starts brain, heartbeat, channels.
  */
@@ -10,7 +11,7 @@ import { loadConfig } from './config';
 import { Brain } from './brain';
 import { StrategyEngine } from './strategy';
 import { Heartbeat } from './heartbeat';
-import { TerminalChannel } from './channels';
+import { TerminalChannel, TelegramChannel } from './channels';
 import { Notifier } from './notify';
 import { PriceMonitor, TokenPriceMonitor } from './monitor';
 
@@ -100,6 +101,42 @@ async function main(): Promise<void> {
   }, config.heartbeat.interval_minutes * 60 * 1000);
 
   // Start channels
+  let telegramChannel: TelegramChannel | null = null;
+
+  if (config.channels.telegram?.enabled && config.channels.telegram?.bot_token) {
+    try {
+      const masterKey = process.env.TELEGRAM_MASTER_KEY || '';
+      if (!masterKey) {
+        console.warn('[KausaOS] TELEGRAM_MASTER_KEY not set in .env. Telegram channel disabled.');
+      } else {
+        telegramChannel = new TelegramChannel({
+          config,
+          basePath,
+          strategyEngine,
+          tokenPriceMonitor,
+          masterKey,
+        });
+        await telegramChannel.start();
+        console.log('[KausaOS] Telegram channel started');
+
+        // Connect notifier to Telegram bot for proactive alerts
+        notifier.setTelegramBot(telegramChannel.getBot());
+        telegramChannel.setNotifier(notifier);
+
+        // Register existing telegram users' chat IDs for notifications
+        const telegramUsers = strategyEngine.listTelegramUsers('active');
+        for (const user of telegramUsers) {
+          notifier.addTelegramChatId(user.telegram_id);
+        }
+        if (telegramUsers.length > 0) {
+          console.log(`[KausaOS] Registered ${telegramUsers.length} Telegram user(s) for notifications`);
+        }
+      }
+    } catch (err: any) {
+      console.error(`[KausaOS] Telegram init failed: ${err.message}`);
+    }
+  }
+
   if (config.channels.terminal.enabled) {
     heartbeat.setQuiet(true); // suppress routine logs in terminal mode
     const terminal = new TerminalChannel(brain);
@@ -113,6 +150,7 @@ async function main(): Promise<void> {
     heartbeat.stop();
     strategyEngine.close();
     clearInterval(syncInterval);
+    if (telegramChannel) telegramChannel.stop();
     process.exit(0);
   };
 

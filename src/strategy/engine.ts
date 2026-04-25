@@ -29,6 +29,7 @@ export interface Strategy {
   executions_today: number;
   last_executed_at: string | null;
   created_at: string;
+  owner_telegram_id: string | null;
 }
 
 export interface StrategyLog {
@@ -39,6 +40,19 @@ export interface StrategyLog {
   action_type: string;
   action_result: string;
   success: boolean;
+}
+
+export interface TelegramUser {
+  telegram_id: string;
+  telegram_username: string | null;
+  wallet_address: string;
+  wallet_encrypted: string;
+  api_key: string;
+  meta_address: string;
+  tier: string;
+  status: string;
+  created_at: string;
+  last_active_at: string | null;
 }
 
 export class StrategyEngine {
@@ -119,7 +133,27 @@ export class StrategyEngine {
         last_dca_at TEXT,
         created_at TEXT NOT NULL
       );
+
+        CREATE TABLE IF NOT EXISTS telegram_users (
+          telegram_id TEXT PRIMARY KEY,
+          telegram_username TEXT,
+          wallet_address TEXT NOT NULL,
+          wallet_encrypted TEXT NOT NULL,
+          api_key TEXT NOT NULL,
+          meta_address TEXT NOT NULL,
+          tier TEXT DEFAULT 'FREE',
+          status TEXT DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          last_active_at TEXT
+        );
     `);
+
+    // Migration: add owner_telegram_id to strategies (for multi-tenant)
+    try {
+      this.db.exec("ALTER TABLE strategies ADD COLUMN owner_telegram_id TEXT DEFAULT NULL");
+    } catch (_) {
+      // Column already exists, ignore
+    }
   }
 
   // Reset daily counters if new day
@@ -146,14 +180,15 @@ export class StrategyEngine {
     action_params?: Record<string, any>;
     max_executions_per_day?: number;
     cooldown_minutes?: number;
+    owner_telegram_id?: string;
   }): Strategy {
     const id = generateId();
     const now = new Date().toISOString();
 
     this.db.prepare(`
       INSERT INTO strategies (id, name, trigger_type, trigger_condition, trigger_interval_seconds,
-        action_type, action_params, max_executions_per_day, cooldown_minutes, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+        action_type, action_params, max_executions_per_day, cooldown_minutes, status, created_at, owner_telegram_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
     `).run(
       id,
       params.name,
@@ -164,7 +199,8 @@ export class StrategyEngine {
       JSON.stringify(params.action_params || {}),
       params.max_executions_per_day || 5,
       params.cooldown_minutes || 30,
-      now
+      now,
+      params.owner_telegram_id || null
     );
 
     return this.getStrategy(id)!;
@@ -317,7 +353,8 @@ export class StrategyEngine {
       if (existing) {
         const newTotalToken = existing.total_amount_token + amountToken;
         const newTotalInvested = existing.total_invested_sol + amountSol;
-        const newAvgPrice = newTotalInvested > 0 ? (existing.average_buy_price_usd * existing.total_invested_sol + priceUsd * amountSol) / newTotalInvested : priceUsd;
+        // Weighted average price by token amount: (old_tokens * old_price + new_tokens * new_price) / total_tokens
+        const newAvgPrice = newTotalToken > 0 ? (existing.average_buy_price_usd * existing.total_amount_token + priceUsd * amountToken) / newTotalToken : priceUsd;
         this.db.prepare(`
           UPDATE portfolio_positions SET total_amount_token = ?, total_invested_sol = ?, average_buy_price_usd = ?, last_updated = ?
           WHERE pocket_id = ? AND token_mint = ?
@@ -422,6 +459,84 @@ export class StrategyEngine {
   updateTradeRuleDcaTime(id: string): void {
     const now = new Date().toISOString();
     this.db.prepare('UPDATE trade_rules SET last_dca_at = ? WHERE id = ?').run(now, id);
+  }
+
+
+  // ============ TELEGRAM USERS ============
+
+  createTelegramUser(params: {
+    telegram_id: string;
+    telegram_username?: string;
+    wallet_address: string;
+    wallet_encrypted: string;
+    api_key: string;
+    meta_address: string;
+  }): TelegramUser {
+    const now = new Date().toISOString();
+
+    this.db.prepare(`
+      INSERT INTO telegram_users (telegram_id, telegram_username, wallet_address, wallet_encrypted, api_key, meta_address, tier, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'FREE', 'active', ?)
+    `).run(
+      params.telegram_id,
+      params.telegram_username || null,
+      params.wallet_address,
+      params.wallet_encrypted,
+      params.api_key,
+      params.meta_address,
+      now
+    );
+
+    return this.getTelegramUser(params.telegram_id)!;
+  }
+
+  getTelegramUser(telegramId: string): TelegramUser | null {
+    return this.db.prepare(
+      'SELECT * FROM telegram_users WHERE telegram_id = ?'
+    ).get(telegramId) as TelegramUser | null;
+  }
+
+  getTelegramUserByWallet(walletAddress: string): TelegramUser | null {
+    return this.db.prepare(
+      'SELECT * FROM telegram_users WHERE wallet_address = ?'
+    ).get(walletAddress) as TelegramUser | null;
+  }
+
+  listTelegramUsers(status?: string): TelegramUser[] {
+    if (status) {
+      return this.db.prepare(
+        'SELECT * FROM telegram_users WHERE status = ?'
+      ).all(status) as TelegramUser[];
+    }
+    return this.db.prepare(
+      'SELECT * FROM telegram_users'
+    ).all() as TelegramUser[];
+  }
+
+  updateTelegramUserActivity(telegramId: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare(
+      'UPDATE telegram_users SET last_active_at = ? WHERE telegram_id = ?'
+    ).run(now, telegramId);
+  }
+
+  updateTelegramUserTier(telegramId: string, tier: string): void {
+    this.db.prepare(
+      'UPDATE telegram_users SET tier = ? WHERE telegram_id = ?'
+    ).run(tier, telegramId);
+  }
+
+  updateTelegramUserStatus(telegramId: string, status: string): void {
+    this.db.prepare(
+      'UPDATE telegram_users SET status = ? WHERE telegram_id = ?'
+    ).run(status, telegramId);
+  }
+
+  deleteTelegramUser(telegramId: string): boolean {
+    const result = this.db.prepare(
+      'DELETE FROM telegram_users WHERE telegram_id = ?'
+    ).run(telegramId);
+    return result.changes > 0;
   }
 
   close(): void {

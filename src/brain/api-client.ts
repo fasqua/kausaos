@@ -128,6 +128,10 @@ export class KausaLayerClient {
     return this.walletAddress;
   }
 
+  getEndpoint(): string {
+    return this.endpoint;
+  }
+
   getTierInfo(): TierInfo {
     return this.tierInfo;
   }

@@ -24,6 +24,7 @@ export class Brain {
   private priceData: any;
   private strategyEngine: any;
   private tokenPriceMonitor: any;
+  private telegramId: string | undefined;
 
   constructor(options: BrainOptions) {
     this.llm = createLlmProvider(options.config.llm);
@@ -34,6 +35,7 @@ export class Brain {
     this.priceData = null;
     this.strategyEngine = null;
     this.tokenPriceMonitor = null;
+    this.telegramId = undefined;
     this.systemContext = {
       activePockets: 0,
       activeStrategies: 0,
@@ -53,6 +55,10 @@ export class Brain {
 
   setStrategyEngine(engine: any): void {
     this.strategyEngine = engine;
+  }
+
+  setTelegramId(id: string): void {
+    this.telegramId = id;
   }
 
   setTokenPriceMonitor(monitor: any): void {
@@ -152,6 +158,7 @@ export class Brain {
           priceData: this.priceData,
           strategyEngine: this.strategyEngine,
           tokenPriceMonitor: this.tokenPriceMonitor,
+          telegramId: this.telegramId,
         });
 
         // Add assistant message with tool call indication

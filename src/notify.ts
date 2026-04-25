@@ -5,12 +5,17 @@
  */
 
 import axios from 'axios';
+import TelegramBot from 'node-telegram-bot-api';
 
 export class Notifier {
   private webhooks: string[];
+  private telegramBot: TelegramBot | null;
+  private telegramChatIds: Set<string>;
 
   constructor(webhooks: string[] = []) {
     this.webhooks = webhooks;
+    this.telegramBot = null;
+    this.telegramChatIds = new Set();
   }
 
   /**
@@ -33,6 +38,9 @@ export class Notifier {
         console.warn(`[NOTIFY] Webhook failed (${url}): ${err.message}`);
       }
     }
+
+    // Send to Telegram chats
+    await this.broadcastTelegram(message);
   }
 
   /**
@@ -110,10 +118,64 @@ export class Notifier {
   }
 
   /**
+   * Set Telegram bot instance for sending notifications
+   */
+  setTelegramBot(bot: TelegramBot): void {
+    this.telegramBot = bot;
+  }
+
+  /**
+   * Register a Telegram chat ID for notifications
+   */
+  addTelegramChatId(chatId: string): void {
+    this.telegramChatIds.add(chatId);
+  }
+
+  /**
+   * Remove a Telegram chat ID
+   */
+  removeTelegramChatId(chatId: string): void {
+    this.telegramChatIds.delete(chatId);
+  }
+
+  /**
+   * Send notification to a specific Telegram chat
+   */
+  async sendTelegram(chatId: string, message: string): Promise<void> {
+    if (!this.telegramBot) return;
+    try {
+      await this.telegramBot.sendMessage(parseInt(chatId), message, {
+        parse_mode: 'Markdown',
+      }).catch(async () => {
+        await this.telegramBot!.sendMessage(parseInt(chatId), message);
+      });
+    } catch (err: any) {
+      console.warn(`[NOTIFY] Telegram send failed (${chatId}): ${err.message}`);
+    }
+  }
+
+  /**
+   * Send notification to all registered Telegram chats
+   */
+  async broadcastTelegram(message: string): Promise<void> {
+    if (!this.telegramBot || this.telegramChatIds.size === 0) return;
+    for (const chatId of this.telegramChatIds) {
+      await this.sendTelegram(chatId, message);
+    }
+  }
+
+  /**
    * Check if webhooks are configured
    */
   hasWebhooks(): boolean {
     return this.webhooks.length > 0;
+  }
+
+  /**
+   * Check if any notification channel is configured
+   */
+  hasAnyChannel(): boolean {
+    return this.webhooks.length > 0 || this.telegramChatIds.size > 0;
   }
 
   /**

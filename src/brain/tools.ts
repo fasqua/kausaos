@@ -561,7 +561,7 @@ export const allTools: ToolDefinition[] = [
 export async function executeTool(
   toolCall: ToolCall,
   apiClient: KausaLayerClient,
-  context: { strategies?: any; systemStatus?: any; priceData?: any; strategyEngine?: any; tokenPriceMonitor?: any }
+  context: { strategies?: any; systemStatus?: any; priceData?: any; strategyEngine?: any; tokenPriceMonitor?: any; telegramId?: string }
 ): Promise<string> {
   const { name, input } = toolCall;
 
@@ -660,14 +660,28 @@ export async function executeTool(
             const outputMint = input.output_mint as string || '';
             const amountSol = (input.amount as number) || 0;
             const isBuy = inputMint === 'SOL' || inputMint === 'So11111111111111111111111111111111111111112';
+            const tokenMint = isBuy ? outputMint : inputMint;
+            const outAmount = parseFloat(swapData.out_amount || swapData.in_amount || '0');
+
+            // Calculate price_usd per token from current market data
+            let priceUsd = 0;
+            if (context.tokenPriceMonitor && tokenMint) {
+              try {
+                const tokenPrice = await context.tokenPriceMonitor.getTokenPrice(tokenMint);
+                if (tokenPrice && tokenPrice.price_usd > 0) {
+                  priceUsd = tokenPrice.price_usd;
+                }
+              } catch (_) {}
+            }
+
             context.strategyEngine.recordTrade({
               pocket_id: input.pocket_id as string,
-              token_mint: isBuy ? outputMint : inputMint,
+              token_mint: tokenMint,
               token_symbol: (swapData.output_symbol || swapData.input_symbol || outputMint || '').toUpperCase(),
               side: isBuy ? 'buy' : 'sell',
               amount_sol: amountSol,
-              amount_token: parseFloat(swapData.out_amount || swapData.in_amount || '0'),
-              price_usd: parseFloat(swapData.price_usd || '0'),
+              amount_token: outAmount,
+              price_usd: priceUsd,
               tx_signature: swapData.tx_signature || null,
             });
           } catch (err: any) {
@@ -752,15 +766,19 @@ export async function executeTool(
       // Strategy (local operations - handled by strategy engine)
       case 'create_strategy':
         if (context.strategyEngine) {
+          // Auto-calculate cooldown from interval if not specified
+          const intervalSec = (input.trigger_interval_seconds as number) || 60;
+          const defaultCooldown = Math.max(1, Math.ceil(intervalSec / 60));
           const strat = context.strategyEngine.createStrategy({
             name: (input.name as string) || 'unnamed',
             trigger_type: input.trigger_type as any,
             trigger_condition: input.trigger_condition as string,
-            trigger_interval_seconds: (input.trigger_interval_seconds as number) || 60,
+            trigger_interval_seconds: intervalSec,
             action_type: input.action_type as any,
             action_params: (input.action_params as any) || {},
-            max_executions_per_day: (input.max_executions_per_day as number) || 5,
-            cooldown_minutes: (input.cooldown_minutes as number) || 30,
+            max_executions_per_day: (input.max_executions_per_day as number) || 1440,
+            cooldown_minutes: (input.cooldown_minutes as number) || defaultCooldown,
+            owner_telegram_id: context.telegramId,
           });
           result = { success: true, data: strat };
         } else {
