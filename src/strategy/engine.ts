@@ -53,6 +53,7 @@ export interface TelegramUser {
   status: string;
   created_at: string;
   last_active_at: string | null;
+  maze_config: string | null;
 }
 
 export class StrategyEngine {
@@ -151,6 +152,13 @@ export class StrategyEngine {
     // Migration: add owner_telegram_id to strategies (for multi-tenant)
     try {
       this.db.exec("ALTER TABLE strategies ADD COLUMN owner_telegram_id TEXT DEFAULT NULL");
+    } catch (_) {
+      // Column already exists, ignore
+    }
+
+    // Migration: add maze_config to telegram_users (custom routing per user)
+    try {
+      this.db.exec("ALTER TABLE telegram_users ADD COLUMN maze_config TEXT DEFAULT NULL");
     } catch (_) {
       // Column already exists, ignore
     }
@@ -537,6 +545,39 @@ export class StrategyEngine {
       'DELETE FROM telegram_users WHERE telegram_id = ?'
     ).run(telegramId);
     return result.changes > 0;
+  }
+
+  // ============ MAZE CONFIG ============
+
+  getMazeConfig(telegramId: string): Record<string, any> | null {
+    const user = this.getTelegramUser(telegramId);
+    if (!user || !user.maze_config) return null;
+    try {
+      return JSON.parse(user.maze_config);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  setMazeConfig(telegramId: string, config: {
+    hop_count?: number;
+    split_ratio?: number;
+    merge_strategy?: string;
+    delay_pattern?: string;
+    delay_ms?: number;
+    delay_scope?: string;
+  }): Record<string, any> {
+    const configJson = JSON.stringify(config);
+    this.db.prepare(
+      'UPDATE telegram_users SET maze_config = ? WHERE telegram_id = ?'
+    ).run(configJson, telegramId);
+    return config;
+  }
+
+  clearMazeConfig(telegramId: string): void {
+    this.db.prepare(
+      'UPDATE telegram_users SET maze_config = NULL WHERE telegram_id = ?'
+    ).run(telegramId);
   }
 
   close(): void {

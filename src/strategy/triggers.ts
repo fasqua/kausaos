@@ -203,21 +203,41 @@ function evaluateTimeBased(condition: string): TriggerResult {
   const now = new Date();
 
   if (condition.startsWith('every:')) {
+    // "every:" triggers rely on trigger_interval_seconds for timing
+    // They always return true here; cooldown/interval handles frequency
     return { triggered: true, reason: `Time-based trigger: ${condition}` };
   }
 
   if (condition.startsWith('cron:')) {
+    // Full 5-field cron: minute hour day-of-month month day-of-week
     const cronParts = condition.replace('cron:', '').trim().split(' ');
-    if (cronParts.length >= 2) {
-      const cronMinute = parseInt(cronParts[0]);
-      const cronHour = parseInt(cronParts[1]);
-      const currentHour = now.getUTCHours();
-      const currentMinute = now.getUTCMinutes();
-
-      if (currentHour === cronHour && Math.abs(currentMinute - cronMinute) < 30) {
-        return { triggered: true, reason: `Cron trigger matched: ${condition}` };
-      }
+    if (cronParts.length < 2) {
+      return { triggered: false, reason: `Invalid cron format: ${condition}` };
     }
+
+    const cronMinute = cronParts[0];
+    const cronHour = cronParts[1];
+    const cronDayOfMonth = cronParts[2] || '*';
+    const cronMonth = cronParts[3] || '*';
+    const cronDayOfWeek = cronParts[4] || '*';
+
+    const currentMinute = now.getUTCMinutes();
+    const currentHour = now.getUTCHours();
+    const currentDayOfMonth = now.getUTCDate();
+    const currentMonth = now.getUTCMonth() + 1; // 1-indexed
+    const currentDayOfWeek = now.getUTCDay(); // 0=Sunday
+
+    // Check each field (* means any)
+    const minuteMatch = cronMinute === '*' || parseInt(cronMinute) === currentMinute;
+    const hourMatch = cronHour === '*' || parseInt(cronHour) === currentHour;
+    const dayOfMonthMatch = cronDayOfMonth === '*' || parseInt(cronDayOfMonth) === currentDayOfMonth;
+    const monthMatch = cronMonth === '*' || parseInt(cronMonth) === currentMonth;
+    const dayOfWeekMatch = cronDayOfWeek === '*' || parseInt(cronDayOfWeek) === currentDayOfWeek;
+
+    if (minuteMatch && hourMatch && dayOfMonthMatch && monthMatch && dayOfWeekMatch) {
+      return { triggered: true, reason: `Cron trigger matched: ${condition}` };
+    }
+
     return { triggered: false, reason: `Cron not matched: ${condition}` };
   }
 

@@ -328,6 +328,14 @@ export class TelegramChannel {
 
       const response = await session.brain.processMessage(text);
       await this.sendLongMessage(chatId, response);
+
+      // Auto-monitor deposit if a pocket was just created
+      const pocketMatch = response.match(/pocket_[a-z0-9]+/);
+      const depositMatch = response.match(/deposit|deposit_address|waiting for funding/i);
+      if (pocketMatch && depositMatch) {
+        const pocketId = pocketMatch[0];
+        this.monitorDeposit(chatId, pocketId, session.brain.getApiClient());
+      }
     } catch (err: any) {
       console.error(`[Telegram] Error for ${telegramId}: ${err.message}`);
       await this.bot.sendMessage(chatId, `Something went wrong: ${err.message}`);
@@ -335,6 +343,63 @@ export class TelegramChannel {
 
     // Update activity
     this.strategyEngine.updateTelegramUserActivity(telegramId);
+  }
+
+  /**
+   * Monitor a pocket for deposit arrival and notify user
+   * Polls every 10 seconds for up to 10 minutes
+   */
+  private monitorDeposit(chatId: number, pocketId: string, apiClient: any): void {
+    let attempts = 0;
+    const maxAttempts = 60; // 10 minutes at 10s intervals
+    let lastStatus = '';
+
+    const poll = async () => {
+      attempts++;
+      if (attempts > maxAttempts) {
+        await this.bot.sendMessage(chatId,
+          `Deposit monitoring timed out for ${pocketId}. Use "show pocket ${pocketId}" to check manually.`
+        ).catch(() => {});
+        return;
+      }
+
+      try {
+        const res = await apiClient.getPocket(pocketId);
+        if (!res.success || !res.data) {
+          setTimeout(poll, 10000);
+          return;
+        }
+
+        const status = res.data.status || '';
+        const balance = res.data.balance_sol || res.data.balance || 0;
+
+        // Detect status changes
+        if (status === 'active' && balance > 0 && lastStatus !== 'funded') {
+          lastStatus = 'funded';
+          await this.bot.sendMessage(chatId,
+            `Deposit received! Maze routing complete.\n\n` +
+            `Pocket: \`${pocketId}\`\n` +
+            `Balance: ${balance} SOL\n` +
+            `Status: Active and funded\n\n` +
+            `Your pocket is ready for trading, swaps, and transfers.`,
+            { parse_mode: 'Markdown' }
+          ).catch(async () => {
+            await this.bot.sendMessage(chatId,
+              `Deposit received! Pocket ${pocketId} funded with ${balance} SOL. Ready for trading.`
+            );
+          });
+          return; // Stop polling
+        }
+
+        // Still waiting
+        setTimeout(poll, 10000);
+      } catch (_) {
+        setTimeout(poll, 10000);
+      }
+    };
+
+    // Start polling after 15 seconds (give time for deposit tx)
+    setTimeout(poll, 15000);
   }
 
   /**

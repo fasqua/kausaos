@@ -552,6 +552,33 @@ export const allTools: ToolDefinition[] = [
       },
     },
   },
+
+  // --- Maze Config (2) ---
+  {
+    name: 'set_maze_config',
+    description: 'Set custom maze routing configuration for all future operations. Controls hop count, merge strategy, delay pattern, and more. Settings persist across sessions.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        hop_count: { type: 'number', description: 'Number of hops (4-20, default: 10)' },
+        split_ratio: { type: 'number', description: 'Split ratio for transactions (0.1-0.9)' },
+        merge_strategy: { type: 'string', enum: ['fibonacci', 'random', 'equal', 'weighted'], description: 'How to merge split transactions back' },
+        delay_pattern: { type: 'string', enum: ['none', 'fixed', 'random', 'exponential'], description: 'Delay pattern between hops' },
+        delay_ms: { type: 'number', description: 'Delay in milliseconds between hops (0-10000)' },
+        delay_scope: { type: 'string', enum: ['per_hop', 'per_level', 'total'], description: 'Where delay applies' },
+      },
+    },
+  },
+  {
+    name: 'get_maze_config',
+    description: 'Show current custom maze routing configuration. Returns null if using defaults.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'reset_maze_config',
+    description: 'Reset maze routing configuration to defaults. Removes all custom settings.',
+    input_schema: { type: 'object', properties: {} },
+  },
 ];
 
 // ============================================================
@@ -565,13 +592,18 @@ export async function executeTool(
 ): Promise<string> {
   const { name, input } = toolCall;
 
+  // Inject user's maze_config into maze-related operations
+  const mazeConfig = (context.strategyEngine && context.telegramId)
+    ? context.strategyEngine.getMazeConfig(context.telegramId)
+    : null;
+
   try {
     let result: ApiResponse;
 
     switch (name) {
       // Pocket Operations
       case 'create_pocket':
-        result = await apiClient.createPocket(input as any);
+        result = await apiClient.createPocket({ ...input, maze_config: mazeConfig || undefined } as any);
         break;
       case 'list_pockets':
         result = await apiClient.listPockets();
@@ -600,7 +632,7 @@ export async function executeTool(
 
       // Maze Routing
       case 'maze_route':
-        result = await apiClient.createRoute(input as any);
+        result = await apiClient.createRoute({ ...input, maze_config: mazeConfig || undefined } as any);
         break;
       case 'check_route_status':
         result = await apiClient.getFundingStatus(input.request_id as string);
@@ -617,10 +649,10 @@ export async function executeTool(
 
       // Sweep
       case 'sweep_pocket':
-        result = await apiClient.sweepPocket(input.pocket_id as string, input as any);
+        result = await apiClient.sweepPocket(input.pocket_id as string, { ...input, maze_config: mazeConfig || undefined } as any);
         break;
       case 'sweep_all_pockets':
-        result = await apiClient.sweepAllPockets(input as any);
+        result = await apiClient.sweepAllPockets({ ...input, maze_config: mazeConfig || undefined } as any);
         break;
       case 'get_sweep_status':
         result = await apiClient.getSweepStatus(input.sweep_id as string);
@@ -637,7 +669,7 @@ export async function executeTool(
 
       // P2P
       case 'send_to_pocket':
-        result = await apiClient.sendToPocket(input.pocket_id as string, input as any);
+        result = await apiClient.sendToPocket(input.pocket_id as string, { ...input, maze_config: mazeConfig || undefined } as any);
         break;
       case 'get_p2p_status':
         result = await apiClient.getP2PStatus(input.transfer_id as string);
@@ -993,6 +1025,42 @@ export async function executeTool(
           }
         } else {
           result = { success: false, error: 'Strategy engine or token price monitor not available' };
+        }
+        break;
+      }
+
+      // Maze Config
+      case 'set_maze_config': {
+        if (context.strategyEngine && context.telegramId) {
+          const config: Record<string, any> = {};
+          if (input.hop_count !== undefined) config.hop_count = input.hop_count;
+          if (input.split_ratio !== undefined) config.split_ratio = input.split_ratio;
+          if (input.merge_strategy !== undefined) config.merge_strategy = input.merge_strategy;
+          if (input.delay_pattern !== undefined) config.delay_pattern = input.delay_pattern;
+          if (input.delay_ms !== undefined) config.delay_ms = input.delay_ms;
+          if (input.delay_scope !== undefined) config.delay_scope = input.delay_scope;
+          const saved = context.strategyEngine.setMazeConfig(context.telegramId, config);
+          result = { success: true, data: { maze_config: saved, message: 'Maze routing config saved. All future operations will use this config.' } };
+        } else {
+          result = { success: false, error: 'Not available (requires Telegram session)' };
+        }
+        break;
+      }
+      case 'get_maze_config': {
+        if (context.strategyEngine && context.telegramId) {
+          const config = context.strategyEngine.getMazeConfig(context.telegramId);
+          result = { success: true, data: { maze_config: config, message: config ? 'Custom config active' : 'Using default routing (no custom config set)' } };
+        } else {
+          result = { success: false, error: 'Not available (requires Telegram session)' };
+        }
+        break;
+      }
+      case 'reset_maze_config': {
+        if (context.strategyEngine && context.telegramId) {
+          context.strategyEngine.clearMazeConfig(context.telegramId);
+          result = { success: true, data: { message: 'Maze routing config reset to defaults.' } };
+        } else {
+          result = { success: false, error: 'Not available (requires Telegram session)' };
         }
         break;
       }

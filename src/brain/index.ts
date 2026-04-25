@@ -135,15 +135,16 @@ export class Brain {
         allTools
       );
 
-      // If LLM returned text, accumulate it
-      if (llmResponse.text) {
-        finalResponse += llmResponse.text;
-      }
-
-      // If no tool calls, we're done
+      // If no tool calls, this is the final response
       if (llmResponse.tool_calls.length === 0 || llmResponse.stop_reason !== 'tool_use') {
+        if (llmResponse.text) {
+          finalResponse += llmResponse.text;
+        }
         break;
       }
+
+      // Tool calls pending - don't add intermediate text to final response
+      // (LLM sometimes outputs "Let me check..." or "Calling tool..." before tool calls)
 
       // Execute each tool call (skip duplicates of mutating operations)
       for (const toolCall of llmResponse.tool_calls) {
@@ -161,16 +162,16 @@ export class Brain {
           telegramId: this.telegramId,
         });
 
-        // Add assistant message with tool call indication
+        // Add tool interaction to conversation history (hidden from user)
         this.conversationHistory.push({
           role: 'assistant',
-          content: `[Calling tool: ${toolCall.name}]`,
+          content: `Executed ${toolCall.name} successfully.`,
         });
 
-        // Add tool result as user message (for next LLM turn)
+        // Add tool result for next LLM turn
         this.conversationHistory.push({
           role: 'user',
-          content: `[Tool result for ${toolCall.name}]: ${toolResult}`,
+          content: `Result of ${toolCall.name}: ${toolResult}`,
         });
       }
     }

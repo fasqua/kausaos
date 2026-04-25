@@ -156,15 +156,28 @@ async function actionSwap(
   const outputMint = params.output_mint || 'USDC';
   const slippageBps = params.slippage_bps || 300;
 
-  // Swap all matched pockets, or use pocket_id from params
-  const pocketsToSwap = matchedPockets.length > 0
+  // Swap matched pockets, or specific pocket_id, or ALL active pockets
+  let pocketsToSwap = matchedPockets.length > 0
     ? matchedPockets
     : params.pocket_id
       ? [params.pocket_id]
       : [];
 
+  // If no pockets specified, fetch all active pockets (for price-triggered swap-all)
   if (pocketsToSwap.length === 0) {
-    return { success: false, message: 'No pockets specified for swap' };
+    try {
+      const pocketsRes = await apiClient.listPockets();
+      if (pocketsRes.success && pocketsRes.data) {
+        const allPockets = Array.isArray(pocketsRes.data) ? pocketsRes.data : pocketsRes.data.pockets || [];
+        pocketsToSwap = allPockets
+          .filter((p: any) => p.status === 'active')
+          .map((p: any) => p.id || p.pocket_id);
+      }
+    } catch (_) {}
+  }
+
+  if (pocketsToSwap.length === 0) {
+    return { success: false, message: 'No active pockets found for swap' };
   }
 
   const results: string[] = [];

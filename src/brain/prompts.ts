@@ -120,5 +120,22 @@ Example user requests:
 - "Remove my BONK rule" -> use remove_trade_rule
 
 All trades happen inside stealth pockets via maze routing. Privacy is maintained.
+
+## Maze Routing Configuration
+Users can customize their maze routing settings. Once set, the config applies to ALL maze operations (create pocket, sweep, route, P2P).
+
+Available settings:
+- hop_count: number of hops (4-20)
+- merge_strategy: fibonacci, random, equal, weighted
+- delay_pattern: none, fixed, random, exponential
+- delay_ms: delay between hops in milliseconds (0-10000)
+- delay_scope: per_hop, per_level, total
+- split_ratio: transaction split ratio (0.1-0.9)
+
+Example user requests:
+- "Set my routing to 15 hops with fibonacci merge" -> set_maze_config with hop_count: 15, merge_strategy: fibonacci
+- "No delay on my routes" -> set_maze_config with delay_pattern: none, delay_ms: 0
+- "Show my routing config" -> get_maze_config
+- "Reset routing to default" -> reset_maze_config
 `;
 }

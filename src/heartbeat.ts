@@ -210,14 +210,24 @@ export class Heartbeat {
         console.log(`[Heartbeat] ANOMALY: ${anomalies.length} operation(s) stuck > 10 minutes`);
       }
 
-      // Check backend for stuck/failed operations
+      // Check backend for stuck/failed operations and auto-recover
       try {
         const opsStatus = await this.opsMonitor.checkOperations(this.apiClient);
+
+        // Auto-recover stuck operations (> 10 minutes)
         if (opsStatus.stuck.length > 0) {
-          console.log(`[Heartbeat] STUCK: ${opsStatus.stuck.length} operation(s) stuck in backend`);
+          console.log(`[Heartbeat] STUCK: ${opsStatus.stuck.length} operation(s) stuck, attempting auto-recovery...`);
+          for (const op of opsStatus.stuck) {
+            await this.autoRecover(op);
+          }
         }
+
+        // Auto-recover failed operations
         if (opsStatus.failed.length > 0) {
-          console.log(`[Heartbeat] FAILED: ${opsStatus.failed.length} operation(s) failed in backend`);
+          console.log(`[Heartbeat] FAILED: ${opsStatus.failed.length} operation(s) failed, attempting auto-recovery...`);
+          for (const op of opsStatus.failed) {
+            await this.autoRecover(op);
+          }
         }
       } catch (_) {}
     } catch (err: any) {
@@ -269,6 +279,48 @@ export class Heartbeat {
     }
 
     return this.apiClient;
+  }
+
+  /**
+   * Auto-recover a stuck or failed operation
+   * Determines operation type and calls appropriate recovery endpoint
+   * Notifies the owner via Telegram if recovery succeeds or fails
+   */
+  private async autoRecover(op: { id: string; type: string; status: string; amount_sol: number; age_minutes: number }): Promise<void> {
+    try {
+      let result;
+      const opId = op.id;
+
+      if (opId.startsWith('fund_')) {
+        // Funding operation - recover by pocket ID
+        const pocketId = 'pocket_' + opId.slice(5);
+        console.log(`[AutoRecover] Recovering funding for ${pocketId}...`);
+        result = await this.apiClient.recoverFunding(pocketId);
+      } else if (opId.startsWith('sweep_')) {
+        // Sweep operation
+        console.log(`[AutoRecover] Recovering sweep ${opId}...`);
+        result = await this.apiClient.recoverSweep(opId);
+      } else if (opId.startsWith('p2p_')) {
+        // P2P transfer
+        console.log(`[AutoRecover] Recovering P2P ${opId}...`);
+        result = await this.apiClient.recoverP2P(opId);
+      } else {
+        console.log(`[AutoRecover] Unknown operation type for ${opId}, skipping`);
+        return;
+      }
+
+      if (result.success) {
+        const msg = `Auto-recovery successful: ${op.type} operation ${opId} (${op.amount_sol} SOL, was stuck ${op.age_minutes}min)`;
+        console.log(`[AutoRecover] ${msg}`);
+        await this.notifier.send(msg);
+      } else {
+        const msg = `Auto-recovery failed for ${opId}: ${result.error}`;
+        console.log(`[AutoRecover] ${msg}`);
+        await this.notifier.send(msg);
+      }
+    } catch (err: any) {
+      console.error(`[AutoRecover] Error recovering ${op.id}: ${err.message}`);
+    }
   }
 
   /**
