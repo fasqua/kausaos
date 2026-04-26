@@ -151,10 +151,20 @@ export class Heartbeat {
             // Use owner-specific notifier to avoid broadcasting to all users
             const ownerNotifier = strategy.owner_telegram_id ? this.createOwnerNotifier(strategy.owner_telegram_id) : this.notifier;
 
+            // Resolve API client for strategy owner (multi-tenant)
+            let strategyApiClient = this.apiClient;
+            if (strategy.owner_telegram_id) {
+              const owner = this.strategyEngine.getTelegramUser(strategy.owner_telegram_id);
+              if (owner) {
+                strategyApiClient = this.getApiClientForUser(owner.api_key, this.kausalayerEndpoint);
+                try { await strategyApiClient.init(); } catch (_) {}
+              }
+            }
+
             const pipelineResult = await this.pipeline.run(
               strategy,
               triggerResult,
-              this.apiClient,
+              strategyApiClient,
               this.strategyEngine,
               ownerNotifier
             );
@@ -167,6 +177,12 @@ export class Heartbeat {
             );
 
             console.log(`[Heartbeat] Strategy "${strategy.name}" [${pipelineResult.stage}]: ${pipelineResult.message}`);
+
+            // Auto-complete schedule strategies after execution
+            if (strategy.trigger_type === 'schedule' && pipelineResult.success) {
+              this.strategyEngine.updateStrategyStatus(strategy.id, 'completed');
+              console.log(`[Heartbeat] Schedule strategy "${strategy.name}" completed and deactivated`);
+            }
 
             // Send notification to strategy owner's Telegram chat
             if (strategy.owner_telegram_id && this.notifier.hasAnyChannel()) {

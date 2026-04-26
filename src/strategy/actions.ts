@@ -182,11 +182,42 @@ async function actionSwap(
 
   const results: string[] = [];
   for (const pocketId of pocketsToSwap) {
+    let swapAmount = parseFloat(params.amount) || 0;
+    let amountRaw: number | undefined = undefined;
+
+    // Handle "all" amount - fetch token balance and swap everything
+    if (params.amount === 'all' || params.amount === 'max') {
+      if (inputMint === 'SOL' || inputMint === 'So11111111111111111111111111111111111111112') {
+        // Sell all SOL: fetch pocket balance
+        try {
+          const pocketRes = await apiClient.getPocket(pocketId);
+          if (pocketRes.success && pocketRes.data) {
+            const balance = pocketRes.data.balance_sol || 0;
+            swapAmount = Math.max(0, balance - 0.005); // reserve for fees
+          }
+        } catch (_) {}
+      } else {
+        // Sell all tokens: fetch token balance
+        try {
+          const balRes = await apiClient.getTokenBalances(pocketId);
+          if (balRes.success && balRes.data) {
+            const tokens = Array.isArray(balRes.data) ? balRes.data : balRes.data.tokens || [];
+            const token = tokens.find((t: any) => t.mint === inputMint || t.symbol === inputMint);
+            if (token) {
+              amountRaw = parseInt(token.balance_raw || token.amount_raw || token.amount || '0');
+              swapAmount = 0;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
     const res = await apiClient.swapExecute(pocketId, {
       input_mint: inputMint,
       output_mint: outputMint,
-      amount: params.amount || 0,
+      amount: swapAmount,
       slippage_bps: slippageBps,
+      amount_raw: amountRaw,
     });
     results.push(res.success ? `${pocketId}: swapped` : `${pocketId}: ${res.error}`);
   }

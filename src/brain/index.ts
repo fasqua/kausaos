@@ -135,23 +135,26 @@ export class Brain {
         allTools
       );
 
-      // If no tool calls, this is the final response
+      console.log(`[Brain] Loop ${loopCount}: text="${llmResponse.text?.slice(0, 100) || ''}" tools=${llmResponse.tool_calls.map(t => t.name).join(',')||'none'} stop=${llmResponse.stop_reason}`);
+
+      // If LLM returned text, accumulate it
+      if (llmResponse.text) {
+        finalResponse += llmResponse.text;
+      }
+
+      // If no tool calls, we are done
       if (llmResponse.tool_calls.length === 0 || llmResponse.stop_reason !== 'tool_use') {
-        if (llmResponse.text) {
-          finalResponse += llmResponse.text;
-        }
         break;
       }
 
-      // Tool calls pending - don't add intermediate text to final response
-      // (LLM sometimes outputs "Let me check..." or "Calling tool..." before tool calls)
-
       // Execute each tool call (skip duplicates of mutating operations)
+      let allSkipped = true;
       for (const toolCall of llmResponse.tool_calls) {
         const mutatingTools = ['create_strategy', 'delete_strategy', 'sweep_pocket', 'sweep_all_pockets', 'send_to_pocket', 'swap_execute', 'create_pocket', 'delete_pocket'];
         if (mutatingTools.includes(toolCall.name) && executedTools.has(toolCall.name)) {
           continue; // Skip duplicate mutating tool call
         }
+        allSkipped = false;
         executedTools.add(toolCall.name);
         const toolResult = await executeTool(toolCall, this.apiClient, {
           strategies: null,
@@ -162,18 +165,30 @@ export class Brain {
           telegramId: this.telegramId,
         });
 
-        // Add tool interaction to conversation history (hidden from user)
+        console.log(`[Brain] Tool ${toolCall.name} result: ${toolResult.slice(0, 150)}`);
+
+        // Add tool result to conversation history
+        // Use assistant message with raw data (no template text that LLM can mimic)
         this.conversationHistory.push({
           role: 'assistant',
-          content: `Executed ${toolCall.name} successfully.`,
+          content: toolResult,
         });
-
-        // Add tool result for next LLM turn
         this.conversationHistory.push({
           role: 'user',
-          content: `Result of ${toolCall.name}: ${toolResult}`,
+          content: 'Continue.',
         });
       }
+
+      // If all tool calls were skipped (duplicates), use current text and break
+      if (allSkipped) {
+        if (llmResponse.text) {
+          finalResponse = llmResponse.text;
+        }
+        break;
+      }
+
+      // Clear intermediate text so only final LLM response is used
+      finalResponse = '';
     }
 
     // Add final response to history

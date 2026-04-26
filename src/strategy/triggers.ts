@@ -61,7 +61,7 @@ export async function evaluateTrigger(
     }
 
     // Single condition
-    return evaluateSingleTrigger(trigger_type, trigger_condition, state);
+    return evaluateSingleTrigger(trigger_type, trigger_condition, state, strategy);
   } catch (err: any) {
     return { triggered: false, reason: `Trigger evaluation error: ${err.message}` };
   }
@@ -138,7 +138,8 @@ function detectTriggerType(condition: string): TriggerType {
 async function evaluateSingleTrigger(
   triggerType: TriggerType,
   condition: string,
-  state: TriggerState
+  state: TriggerState,
+  strategy?: any
 ): Promise<TriggerResult> {
   switch (triggerType) {
     case 'balance_threshold':
@@ -155,6 +156,8 @@ async function evaluateSingleTrigger(
       return evaluatePocketCount(condition, state);
     case 'token_price':
       return evaluateTokenPrice(condition, state);
+    case 'schedule':
+      return evaluateSchedule(condition, strategy);
     default:
       return { triggered: false, reason: `Unknown trigger type: ${triggerType}` };
   }
@@ -555,4 +558,48 @@ async function getPendingCount(apiClient: KausaLayerClient, opsMonitor?: Operati
   } catch (_) {
     return 0;
   }
+}
+
+
+/**
+ * schedule: one-time execution at a specific time
+ * Formats:
+ * - "schedule:2m" (2 minutes from strategy creation)
+ * - "schedule:1h" (1 hour from strategy creation)
+ * - "schedule:30s" (30 seconds from strategy creation)
+ * - "schedule:2026-04-27T09:00:00Z" (absolute ISO timestamp)
+ */
+function evaluateSchedule(condition: string, strategy: any): TriggerResult {
+  const scheduleStr = condition.replace('schedule:', '').trim();
+
+  let targetTime: number;
+
+  // Check if absolute ISO timestamp
+  if (scheduleStr.includes('T') || scheduleStr.includes('-')) {
+    targetTime = new Date(scheduleStr).getTime();
+    if (isNaN(targetTime)) {
+      return { triggered: false, reason: `Invalid schedule timestamp: ${scheduleStr}` };
+    }
+  } else {
+    // Relative time from strategy creation
+    const match = scheduleStr.match(/^(\d+)(s|m|h|d)$/);
+    if (!match) {
+      return { triggered: false, reason: `Invalid schedule format: ${scheduleStr}` };
+    }
+    const amount = parseInt(match[1]);
+    const unit = match[2];
+    const multipliers: Record<string, number> = { s: 1000, m: 60000, h: 3600000, d: 86400000 };
+    const delayMs = amount * multipliers[unit];
+    const createdAt = new Date(strategy.created_at).getTime();
+    targetTime = createdAt + delayMs;
+  }
+
+  const now = Date.now();
+  if (now >= targetTime) {
+    return { triggered: true, reason: `Scheduled execution time reached` };
+  }
+
+  const remainingMs = targetTime - now;
+  const remainingMin = Math.ceil(remainingMs / 60000);
+  return { triggered: false, reason: `Scheduled in ${remainingMin} minute(s)` };
 }

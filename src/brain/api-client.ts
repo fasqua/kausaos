@@ -332,7 +332,13 @@ export class KausaLayerClient {
     output_mint: string;
     amount: number;
   }): Promise<ApiResponse> {
-    return this.request('get', `/pocket/${pocketId}/swap/quote`, params);
+    // Map field names to match backend: output_token, amount_sol
+    const query = {
+      output_token: params.output_mint,
+      amount_sol: params.amount,
+      slippage_bps: undefined as number | undefined,
+    };
+    return this.request('get', `/pocket/${pocketId}/swap/quote`, undefined, query);
   }
 
   async swapExecute(pocketId: string, params: {
@@ -342,7 +348,28 @@ export class KausaLayerClient {
     slippage_bps?: number;
     amount_raw?: number;
   }): Promise<ApiResponse> {
-    return this.request('post', `/pocket/${pocketId}/swap`, params);
+    // Determine swap direction
+    const isBuy = !params.input_mint || params.input_mint === 'SOL' || params.input_mint === 'So11111111111111111111111111111111111111112';
+
+    let body: any;
+    if (isBuy) {
+      // Buy: SOL -> Token
+      body = {
+        output_token: params.output_mint,
+        amount_sol: params.amount,
+        slippage_bps: params.slippage_bps,
+      };
+    } else {
+      // Sell: Token -> SOL
+      body = {
+        output_token: params.output_mint || 'SOL',
+        input_token: params.input_mint,
+        amount_sol: 0,
+        amount_raw: params.amount_raw || Math.floor(params.amount * 1_000_000), // default 6 decimals
+        slippage_bps: params.slippage_bps,
+      };
+    }
+    return this.request('post', `/pocket/${pocketId}/swap`, body);
   }
 
   // === Analytics ===

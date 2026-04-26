@@ -68,6 +68,13 @@ Time triggers:
 - "cron:0 9 * * *" (every day at 09:00 UTC)
 - "every:2h" (every 2 hours)
 
+Schedule triggers (one-time execution):
+- trigger_type: "schedule", trigger_condition: "schedule:2m" (execute once, 2 minutes from now)
+- trigger_type: "schedule", trigger_condition: "schedule:1h" (execute once, 1 hour from now)
+- trigger_type: "schedule", trigger_condition: "schedule:2026-04-27T09:00:00Z" (execute once at specific time)
+- Use schedule for "do X in Y minutes" or "do X tomorrow at 9am" requests
+- Schedule strategies auto-complete after execution (run only once)
+
 Idle triggers:
 - "idle > 6h" (pocket idle more than 6 hours)
 - "idle > 30m" (pocket idle more than 30 minutes)

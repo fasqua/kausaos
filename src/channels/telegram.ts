@@ -406,6 +406,22 @@ export class TelegramChannel {
    * Send long messages in chunks (Telegram max 4096 chars)
    */
   private async sendLongMessage(chatId: number, text: string): Promise<void> {
+    // Debug: log raw response before filter
+    if (text) console.log('[DEBUG] Raw LLM response:', text.slice(0, 200));
+    // Filter out internal tool call artifacts from LLM response
+    text = text
+      .replace(/\[tool:[^\]]+\]/g, '')
+      .replace(/\[result:[^\]]+\][^\n]*/g, '')
+      .replace(/\[Calling tool: [^\]]+\]/g, '')
+      .replace(/Executed \w+ successfully\./g, '')
+      .replace(/\[No response from LLM\]/g, '')
+      .replace(/I used the \w+ function\. Here is the data it returned:/g, '')
+      .replace(/^Continue\.$/gm, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    if (!text) return; // Don't send empty messages
+
     const MAX_LENGTH = 4000;
 
     if (text.length <= MAX_LENGTH) {

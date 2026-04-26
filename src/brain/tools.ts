@@ -390,7 +390,7 @@ export const allTools: ToolDefinition[] = [
         name: { type: 'string', description: 'Strategy name' },
         trigger_type: {
           type: 'string',
-          enum: ['balance_threshold', 'time_based', 'price_based', 'status_based', 'idle_time', 'pocket_count'],
+          enum: ['balance_threshold', 'time_based', 'price_based', 'status_based', 'idle_time', 'pocket_count', 'schedule'],
           description: 'Type of trigger condition',
         },
         trigger_condition: { type: 'string', description: 'Condition expression (e.g., "pocket.balance > 0.5")' },
@@ -453,7 +453,7 @@ export const allTools: ToolDefinition[] = [
       properties: {
         strategy_id: { type: 'string', description: 'Strategy ID to update' },
         name: { type: 'string', description: 'New name' },
-        trigger_type: { type: 'string', enum: ['balance_threshold', 'time_based', 'price_based', 'status_based', 'idle_time', 'pocket_count'], description: 'New trigger type' },
+        trigger_type: { type: 'string', enum: ['balance_threshold', 'time_based', 'price_based', 'status_based', 'idle_time', 'pocket_count', 'schedule'], description: 'New trigger type' },
         trigger_condition: { type: 'string', description: 'New trigger condition' },
         trigger_interval_seconds: { type: 'number', description: 'New check interval' },
         action_type: { type: 'string', enum: ['create_pocket', 'sweep', 'sweep_all', 'send_p2p', 'swap', 'recover', 'notify'], description: 'New action type' },

@@ -11,9 +11,9 @@ function generateId(): string {
   return `strat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export type TriggerType = 'balance_threshold' | 'time_based' | 'price_based' | 'status_based' | 'idle_time' | 'pocket_count' | 'token_price';
+export type TriggerType = 'balance_threshold' | 'time_based' | 'price_based' | 'status_based' | 'idle_time' | 'pocket_count' | 'token_price' | 'schedule';
 export type ActionType = 'create_pocket' | 'sweep' | 'sweep_all' | 'send_p2p' | 'swap' | 'recover' | 'notify';
-export type StrategyStatus = 'active' | 'paused' | 'deleted';
+export type StrategyStatus = 'active' | 'paused' | 'deleted' | 'completed';
 
 export interface Strategy {
   id: string;
@@ -545,6 +545,10 @@ export class StrategyEngine {
       'DELETE FROM telegram_users WHERE telegram_id = ?'
     ).run(telegramId);
     return result.changes > 0;
+  }
+
+  updateStrategyStatus(strategyId: string, status: StrategyStatus): void {
+    this.db.prepare('UPDATE strategies SET status = ? WHERE id = ?').run(status, strategyId);
   }
 
   // ============ MAZE CONFIG ============

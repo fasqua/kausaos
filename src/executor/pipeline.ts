@@ -155,7 +155,8 @@ export class ExecutionPipeline {
     if (strategy.action_type === 'swap') {
       const pocketId = strategy.action_params.pocket_id || matchedPockets[0];
       if (!pocketId) {
-        return { valid: false, reason: 'No pocket specified for swap' };
+        // No specific pocket - actionSwap will auto-fetch all active pockets
+        return { valid: true, reason: 'ok - will swap all active pockets' };
       }
     }
 
