@@ -7,6 +7,7 @@ import { Strategy, ActionType, StrategyEngine } from './engine';
 import { TriggerResult } from './triggers';
 import { KausaLayerClient } from '../brain/api-client';
 import { Notifier } from '../notify';
+import { LlmProvider } from '../brain/llm';
 
 export interface ActionResult {
   success: boolean;
@@ -19,7 +20,8 @@ export async function executeAction(
   triggerResult: TriggerResult,
   apiClient: KausaLayerClient,
   strategyEngine: StrategyEngine,
-  notifier?: Notifier
+  notifier?: Notifier,
+  llmProvider?: LlmProvider
 ): Promise<ActionResult> {
   const { action_type, action_params } = strategy;
   const matchedPockets = triggerResult.matchedPockets || [];
@@ -40,6 +42,10 @@ export async function executeAction(
         return await actionRecover(matchedPockets, apiClient);
       case 'notify':
         return await actionNotify(action_params, strategy.name, triggerResult.reason, notifier);
+      case 'kausa_pay':
+        return await actionKausaPay(action_params, apiClient, notifier);
+      case 'llm_analyze':
+        return await actionLlmAnalyze(action_params, llmProvider);
       default:
         return { success: false, message: `Unknown action type: ${action_type}` };
     }
@@ -272,4 +278,110 @@ async function actionNotify(
   }
 
   return { success: true, message: `Notification sent: ${message}` };
+}
+
+async function actionKausaPay(
+  params: Record<string, any>,
+  apiClient: KausaLayerClient,
+  notifier?: Notifier
+): Promise<ActionResult> {
+  const pocketId = params.pocket_id;
+  const url = params.url;
+  const maxAmount = params.max_amount_usdc || 0.01;
+
+  if (!pocketId || !url) {
+    return { success: false, message: 'kausa_pay requires pocket_id and url' };
+  }
+
+  // Call KausaPay endpoint
+  const res = await apiClient.kausaPay(pocketId, {
+    url,
+    method: params.method || 'POST',
+    body: params.body,
+    max_amount_usdc: maxAmount,
+    headers: params.headers,
+  });
+
+  if (!res.success) {
+    return { success: false, message: `KausaPay failed: ${res.error}` };
+  }
+
+  // Extract content from response
+  let extractedContent = '';
+  const responseData = res.data;
+
+  if (responseData) {
+    if (params.extract_field && responseData[params.extract_field]) {
+      extractedContent = String(responseData[params.extract_field]);
+    } else if (typeof responseData === 'string') {
+      extractedContent = responseData;
+    } else {
+      // Try common response fields
+      const commonFields = ['content', 'data', 'message', 'result', 'premiumContent', 'text', 'answer', 'response'];
+      for (const field of commonFields) {
+        if (responseData[field]) {
+          extractedContent = typeof responseData[field] === 'string'
+            ? responseData[field]
+            : JSON.stringify(responseData[field]);
+          break;
+        }
+      }
+      if (!extractedContent) {
+        extractedContent = JSON.stringify(responseData).slice(0, 500);
+      }
+    }
+  }
+
+  // Truncate if too long
+  if (extractedContent.length > 2000) {
+    extractedContent = extractedContent.slice(0, 2000) + '...';
+  }
+
+  // Auto-notify if enabled
+  if (params.notify !== false && notifier) {
+    const prefix = params.notify_prefix || 'KausaPay Result';
+    await notifier.send(`${prefix}:\n${extractedContent}`, {
+      action: 'kausa_pay',
+      success: true,
+    });
+  }
+
+  return {
+    success: true,
+    message: extractedContent,
+    data: { content: extractedContent, raw: responseData },
+  };
+}
+
+async function actionLlmAnalyze(
+  params: Record<string, any>,
+  llmProvider?: LlmProvider
+): Promise<ActionResult> {
+  const prompt = params.prompt;
+  if (!prompt) {
+    return { success: false, message: 'llm_analyze requires a prompt' };
+  }
+
+  if (!llmProvider) {
+    return { success: false, message: 'LLM provider not available. Check llm config in kausaos.json.' };
+  }
+
+  const systemPrompt = params.system_prompt || 'You are a concise analyst. Answer in 3 sentences max unless instructed otherwise.';
+
+  try {
+    const response = await llmProvider.chat(
+      [{ role: 'user', content: prompt }],
+      systemPrompt,
+      [] // no tools
+    );
+
+    const result = response.text || '';
+    return {
+      success: true,
+      message: result,
+      data: { content: result },
+    };
+  } catch (err: any) {
+    return { success: false, message: 'LLM analysis failed: ' + err.message };
+  }
 }

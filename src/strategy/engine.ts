@@ -12,7 +12,7 @@ function generateId(): string {
 }
 
 export type TriggerType = 'balance_threshold' | 'time_based' | 'price_based' | 'status_based' | 'idle_time' | 'pocket_count' | 'token_price' | 'schedule';
-export type ActionType = 'create_pocket' | 'sweep' | 'sweep_all' | 'send_p2p' | 'swap' | 'recover' | 'notify';
+export type ActionType = 'create_pocket' | 'sweep' | 'sweep_all' | 'send_p2p' | 'swap' | 'recover' | 'notify' | 'kausa_pay' | 'llm_analyze';
 export type StrategyStatus = 'active' | 'paused' | 'deleted' | 'completed';
 
 export interface Strategy {
@@ -30,6 +30,7 @@ export interface Strategy {
   last_executed_at: string | null;
   created_at: string;
   owner_telegram_id: string | null;
+  action_chain: string | null;
 }
 
 export interface StrategyLog {
@@ -162,6 +163,24 @@ export class StrategyEngine {
     } catch (_) {
       // Column already exists, ignore
     }
+
+    // Migration: add action_chain to strategies (for pipeline chaining)
+    try {
+      this.db.exec("ALTER TABLE strategies ADD COLUMN action_chain TEXT DEFAULT NULL");
+    } catch (_) {
+      // Column already exists, ignore
+    }
+
+    // Budget tracking for kausa_pay spending
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS strategy_spend (
+        strategy_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        total_spent_usdc REAL DEFAULT 0,
+        execution_count INTEGER DEFAULT 0,
+        PRIMARY KEY (strategy_id, date)
+      );
+    `);
   }
 
   // Reset daily counters if new day
@@ -189,14 +208,15 @@ export class StrategyEngine {
     max_executions_per_day?: number;
     cooldown_minutes?: number;
     owner_telegram_id?: string;
+    action_chain?: string;
   }): Strategy {
     const id = generateId();
     const now = new Date().toISOString();
 
     this.db.prepare(`
       INSERT INTO strategies (id, name, trigger_type, trigger_condition, trigger_interval_seconds,
-        action_type, action_params, max_executions_per_day, cooldown_minutes, status, created_at, owner_telegram_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+        action_type, action_params, max_executions_per_day, cooldown_minutes, status, created_at, owner_telegram_id, action_chain)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
     `).run(
       id,
       params.name,
@@ -208,7 +228,8 @@ export class StrategyEngine {
       params.max_executions_per_day || 5,
       params.cooldown_minutes || 30,
       now,
-      params.owner_telegram_id || null
+      params.owner_telegram_id || null,
+      params.action_chain || null
     );
 
     return this.getStrategy(id)!;
@@ -217,7 +238,7 @@ export class StrategyEngine {
   getStrategy(id: string): Strategy | null {
     const row = this.db.prepare('SELECT * FROM strategies WHERE id = ? AND status != ?').get(id, 'deleted') as any;
     if (!row) return null;
-    return { ...row, action_params: JSON.parse(row.action_params) };
+    return { ...row, action_params: JSON.parse(row.action_params), action_chain: row.action_chain || null };
   }
 
   listStrategies(status?: StrategyStatus): Strategy[] {
@@ -230,7 +251,7 @@ export class StrategyEngine {
     }
 
     const rows = this.db.prepare(query).all(...params) as any[];
-    return rows.map((r) => ({ ...r, action_params: JSON.parse(r.action_params) }));
+    return rows.map((r) => ({ ...r, action_params: JSON.parse(r.action_params), action_chain: r.action_chain || null }));
   }
 
   pauseStrategy(id: string): boolean {
@@ -257,6 +278,7 @@ export class StrategyEngine {
     action_params?: Record<string, any>;
     max_executions_per_day?: number;
     cooldown_minutes?: number;
+    action_chain?: string;
   }): Strategy | null {
     const existing = this.getStrategy(id);
     if (!existing) return null;
@@ -272,6 +294,7 @@ export class StrategyEngine {
     if (params.action_params !== undefined) { fields.push('action_params = ?'); values.push(JSON.stringify(params.action_params)); }
     if (params.max_executions_per_day !== undefined) { fields.push('max_executions_per_day = ?'); values.push(params.max_executions_per_day); }
     if (params.cooldown_minutes !== undefined) { fields.push('cooldown_minutes = ?'); values.push(params.cooldown_minutes); }
+    if (params.action_chain !== undefined) { fields.push('action_chain = ?'); values.push(params.action_chain); }
 
     if (fields.length === 0) return existing;
 
@@ -582,6 +605,37 @@ export class StrategyEngine {
     this.db.prepare(
       'UPDATE telegram_users SET maze_config = NULL WHERE telegram_id = ?'
     ).run(telegramId);
+  }
+
+  // ============ BUDGET TRACKING ============
+
+  getStrategySpend(strategyId: string, date: string): number {
+    const row = this.db.prepare(
+      'SELECT total_spent_usdc FROM strategy_spend WHERE strategy_id = ? AND date = ?'
+    ).get(strategyId, date) as any;
+    return row ? row.total_spent_usdc : 0;
+  }
+
+  recordStrategySpend(strategyId: string, date: string, amountUsdc: number): void {
+    const existing = this.db.prepare(
+      'SELECT * FROM strategy_spend WHERE strategy_id = ? AND date = ?'
+    ).get(strategyId, date) as any;
+
+    if (existing) {
+      this.db.prepare(
+        'UPDATE strategy_spend SET total_spent_usdc = total_spent_usdc + ?, execution_count = execution_count + 1 WHERE strategy_id = ? AND date = ?'
+      ).run(amountUsdc, strategyId, date);
+    } else {
+      this.db.prepare(
+        'INSERT INTO strategy_spend (strategy_id, date, total_spent_usdc, execution_count) VALUES (?, ?, ?, 1)'
+      ).run(strategyId, date, amountUsdc);
+    }
+  }
+
+  getStrategySpendHistory(strategyId: string, limit: number = 30): any[] {
+    return this.db.prepare(
+      'SELECT * FROM strategy_spend WHERE strategy_id = ? ORDER BY date DESC LIMIT ?'
+    ).all(strategyId, limit);
   }
 
   close(): void {

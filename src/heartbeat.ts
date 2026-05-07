@@ -5,7 +5,6 @@
 
 import { StrategyEngine } from './strategy/engine';
 import { evaluateTrigger, fetchTriggerState } from './strategy/triggers';
-import { executeAction } from './strategy/actions';
 import { ExecutionPipeline } from './executor/pipeline';
 import { KausaLayerClient } from './brain/api-client';
 import { KausaLayerConfig } from './config';
@@ -13,6 +12,8 @@ import { PriceMonitor } from './monitor/price';
 import { TokenPriceMonitor } from './monitor/token-price';
 import { OperationsMonitor } from './monitor/operations';
 import { Notifier } from './notify';
+import { createLlmProvider, LlmProvider } from './brain/llm';
+import { loadConfig } from './config';
 
 export class Heartbeat {
   private intervalMinutes: number;
@@ -30,6 +31,7 @@ export class Heartbeat {
   private tokenPriceMonitor: TokenPriceMonitor;
   private kausalayerEndpoint: string;
   private userApiClients: Map<string, KausaLayerClient>;
+  private llmProvider: LlmProvider | null;
 
   constructor(
     intervalMinutes: number,
@@ -51,6 +53,14 @@ export class Heartbeat {
     this.tokenPriceMonitor = new TokenPriceMonitor();
     this.kausalayerEndpoint = apiClient.getEndpoint();
     this.userApiClients = new Map();
+    this.llmProvider = null;
+    try {
+      const config = loadConfig();
+      this.llmProvider = createLlmProvider(config.llm);
+      console.log('[Heartbeat] LLM provider initialized for chain analysis');
+    } catch (_) {
+      console.warn('[Heartbeat] LLM provider not available (llm_analyze steps will fail)');
+    }
   }
 
   start(): void {
@@ -166,7 +176,8 @@ export class Heartbeat {
               triggerResult,
               strategyApiClient,
               this.strategyEngine,
-              ownerNotifier
+              ownerNotifier,
+              this.llmProvider || undefined
             );
 
             this.strategyEngine.logExecution(

@@ -388,4 +388,15 @@ export class KausaLayerClient {
   async getAirdropVerify(): Promise<ApiResponse> {
     return this.request('get', '/airdrop/verify');
   }
+
+  // === KausaPay (x402 payment endpoint) ===
+  async kausaPay(pocketId: string, params: {
+    url: string;
+    method?: string;
+    body?: string;
+    max_amount_usdc?: number;
+    headers?: Record<string, string>;
+  }): Promise<ApiResponse> {
+    return this.request('post', `/pocket/${pocketId}/pay`, params);
+  }
 }

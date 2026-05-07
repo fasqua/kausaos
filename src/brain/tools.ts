@@ -397,12 +397,13 @@ export const allTools: ToolDefinition[] = [
         trigger_interval_seconds: { type: 'number', description: 'How often to check (default: 60)' },
         action_type: {
           type: 'string',
-          enum: ['create_pocket', 'sweep', 'sweep_all', 'send_p2p', 'swap', 'recover', 'notify'],
+          enum: ['create_pocket', 'sweep', 'sweep_all', 'send_p2p', 'swap', 'recover', 'notify', 'kausa_pay', 'llm_analyze'],
           description: 'Action to execute when triggered',
         },
         action_params: { type: 'object', description: 'Parameters for the action' },
         max_executions_per_day: { type: 'number', description: 'Max times this strategy can fire per day' },
         cooldown_minutes: { type: 'number', description: 'Minimum minutes between executions' },
+        action_chain: { type: 'string', description: 'JSON array of chain steps for multi-step strategies. Each step: {step, action_type, action_params, output_var?, continue_on_fail?}. Use {{$prev.field}} to reference previous step output.' },
       },
       required: ['name', 'trigger_type', 'trigger_condition', 'action_type'],
     },
@@ -456,10 +457,11 @@ export const allTools: ToolDefinition[] = [
         trigger_type: { type: 'string', enum: ['balance_threshold', 'time_based', 'price_based', 'status_based', 'idle_time', 'pocket_count', 'schedule'], description: 'New trigger type' },
         trigger_condition: { type: 'string', description: 'New trigger condition' },
         trigger_interval_seconds: { type: 'number', description: 'New check interval' },
-        action_type: { type: 'string', enum: ['create_pocket', 'sweep', 'sweep_all', 'send_p2p', 'swap', 'recover', 'notify'], description: 'New action type' },
+        action_type: { type: 'string', enum: ['create_pocket', 'sweep', 'sweep_all', 'send_p2p', 'swap', 'recover', 'notify', 'kausa_pay', 'llm_analyze'], description: 'New action type' },
         action_params: { type: 'object', description: 'New action parameters' },
         max_executions_per_day: { type: 'number', description: 'New daily limit' },
         cooldown_minutes: { type: 'number', description: 'New cooldown period' },
+        action_chain: { type: 'string', description: 'New action chain JSON' },
       },
       required: ['strategy_id'],
     },
@@ -578,6 +580,24 @@ export const allTools: ToolDefinition[] = [
     name: 'reset_maze_config',
     description: 'Reset maze routing configuration to defaults. Removes all custom settings.',
     input_schema: { type: 'object', properties: {} },
+  },
+
+  // --- KausaPay (1) ---
+  {
+    name: 'kausa_pay_now',
+    description: 'Pay a x402 API endpoint using USDC from a pocket and return the response. Supports any HTTP API that accepts x402 payments (Perplexity, ScreenshotOne, etc).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pocket_id: { type: 'string', description: 'Pocket ID to pay from' },
+        url: { type: 'string', description: 'x402 endpoint URL to call' },
+        method: { type: 'string', enum: ['GET', 'POST', 'PUT'], description: 'HTTP method (default: POST)' },
+        body: { type: 'string', description: 'Request body as JSON string' },
+        max_amount_usdc: { type: 'number', description: 'Maximum USDC to pay (default: 0.01)' },
+        extract_field: { type: 'string', description: 'Specific field to extract from response JSON' },
+      },
+      required: ['pocket_id', 'url'],
+    },
   },
 ];
 
@@ -811,6 +831,7 @@ export async function executeTool(
             max_executions_per_day: (input.max_executions_per_day as number) || 1440,
             cooldown_minutes: (input.cooldown_minutes as number) || defaultCooldown,
             owner_telegram_id: context.telegramId,
+            action_chain: (input.action_chain as string) || undefined,
           });
           result = { success: true, data: strat };
         } else {
@@ -819,7 +840,10 @@ export async function executeTool(
         break;
       case 'list_strategies':
         if (context.strategyEngine) {
-          const strats = context.strategyEngine.listStrategies();
+          let strats = context.strategyEngine.listStrategies();
+          if (context.telegramId) {
+            strats = strats.filter((s: any) => s.owner_telegram_id === context.telegramId);
+          }
           result = { success: true, data: { strategies: strats, count: strats.length } };
         } else {
           result = { success: false, error: 'Strategy engine not available' };
@@ -860,6 +884,7 @@ export async function executeTool(
             action_params: input.action_params as any,
             max_executions_per_day: input.max_executions_per_day as number | undefined,
             cooldown_minutes: input.cooldown_minutes as number | undefined,
+            action_chain: input.action_chain as string | undefined,
           });
           result = updated
             ? { success: true, data: updated }
@@ -1061,6 +1086,39 @@ export async function executeTool(
           result = { success: true, data: { message: 'Maze routing config reset to defaults.' } };
         } else {
           result = { success: false, error: 'Not available (requires Telegram session)' };
+        }
+        break;
+      }
+
+      // KausaPay
+      case 'kausa_pay_now': {
+        const kpRes = await apiClient.kausaPay(input.pocket_id as string, {
+          url: input.url as string,
+          method: (input.method as string) || 'POST',
+          body: input.body as string,
+          max_amount_usdc: (input.max_amount_usdc as number) || 0.01,
+        });
+        if (kpRes.success && kpRes.data) {
+          let extracted = '';
+          const rd = kpRes.data;
+          if (input.extract_field && rd[input.extract_field as string]) {
+            extracted = String(rd[input.extract_field as string]);
+          } else if (typeof rd === 'string') {
+            extracted = rd;
+          } else {
+            const fields = ['content', 'data', 'message', 'result', 'premiumContent', 'text', 'answer', 'response'];
+            for (const f of fields) {
+              if (rd[f]) {
+                extracted = typeof rd[f] === 'string' ? rd[f] : JSON.stringify(rd[f]);
+                break;
+              }
+            }
+            if (!extracted) extracted = JSON.stringify(rd).slice(0, 500);
+          }
+          if (extracted.length > 2000) extracted = extracted.slice(0, 2000) + '...';
+          result = { success: true, data: { content: extracted, raw: rd } };
+        } else {
+          result = kpRes;
         }
         break;
       }

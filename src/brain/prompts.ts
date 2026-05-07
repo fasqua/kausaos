@@ -128,6 +128,117 @@ Example user requests:
 
 All trades happen inside stealth pockets via maze routing. Privacy is maintained.
 
+## Action Chain (Multi-Step Strategies)
+Strategies can have multiple sequential actions using action_chain. Output from step N becomes context for step N+1.
+
+When user wants multi-step automation, use action_chain instead of single action_type.
+Pass action_chain as a JSON string array of steps.
+
+Template variables:
+- {{$prev.content}} - previous step's output content
+- {{$prev.message}} - previous step's message
+- {{search.content}} - named output variable from a step with output_var: "search"
+- {{$trigger.reason}} - trigger reason text
+
+Example: "Search Perplexity and send me the result"
+  action_chain: '[{"step":1,"action_type":"kausa_pay","action_params":{"pocket_id":"pocket_xxx","url":"https://pplx.x402.paysponge.com/search","method":"POST","body":"{\"query\":\"solana news\"}","max_amount_usdc":0.01},"output_var":"search"},{"step":2,"action_type":"notify","action_params":{"message":"Search result: {{search.content}}"}}]'
+
+Each step: { step: number, action_type: string, action_params: object, output_var?: string, continue_on_fail?: boolean }
+
+When action_chain is used, action_type should still be set (use the first step's type) for logging purposes.
+
+Conditional steps (action_type: "condition"):
+Use condition steps to branch logic in a chain. No DB change needed.
+  { "step": 2, "action_type": "condition", "action_params": { "if": "{{search.content}} contains 'crash'", "then_goto": 3, "else_goto": 5 } }
+  - then_goto / else_goto: step number to jump to, or "stop" to end chain
+  - If both are omitted, chain continues to next step
+
+Condition operators:
+  {{var.field}} contains 'text'     - string contains (case-insensitive)
+  {{var.field}} not_contains 'text' - string does not contain
+  {{var.field}} > 100               - numeric greater than
+  {{var.field}} < 0.5               - numeric less than
+  {{var.field}} == 'value'          - equality
+  {{var.field}} != ''               - not equal
+  {{var.field}} exists              - field exists and not null
+
+Example: "Search news, only notify if crash mentioned"
+  action_chain: '[{"step":1,"action_type":"kausa_pay","action_params":{"pocket_id":"pocket_xxx","url":"https://pplx.x402.paysponge.com/search","method":"POST","body":"{\"query\":\"solana news\"}","max_amount_usdc":0.01},"output_var":"search"},{"step":2,"action_type":"condition","action_params":{"if":"{{search.content}} contains \'crash\'","then_goto":3,"else_goto":"stop"}},{"step":3,"action_type":"notify","action_params":{"message":"ALERT: {{search.content}}"}}]'
+
+## LLM-as-Step (AI Analysis in Chain)
+Use action_type "llm_analyze" as a chain step to analyze, summarize, or decide based on previous step output.
+
+Params:
+  prompt: the analysis prompt (required). Use {{$prev.content}} to inject previous step data.
+  system_prompt: optional system instruction (default: "You are a concise analyst. Answer in 3 sentences max.")
+
+Example: "Search news, summarize, then notify"
+  action_chain steps:
+    step 1: kausa_pay (Perplexity search) -> output_var: "search"
+    step 2: llm_analyze -> prompt: "Summarize in 3 bullet points: {{search.content}}" -> output_var: "analysis"
+    step 3: notify -> message: "Daily Brief:\n{{analysis.content}}"
+
+Example: "Smart alert - analyze if bearish, auto-hedge"
+  step 1: kausa_pay -> fetch market data -> output_var: "market"
+  step 2: llm_analyze -> prompt: "Is this bullish or bearish? Answer ONE word: {{market.content}}" -> output_var: "sentiment"
+  step 3: condition -> if {{sentiment.content}} contains 'bearish' -> goto 4, else goto 5
+  step 4: swap -> SOL to USDC (hedge)
+  step 5: notify -> "Market sentiment: {{sentiment.content}}"
+
+## Loop & Budget Control
+Chain steps can loop (repeat N times) and have budget limits to prevent overspending.
+
+Loop: Add "loop" to any chain step:
+  { "step": 1, "action_type": "kausa_pay", "action_params": {...}, "loop": { "count": 3, "delay_seconds": 60 } }
+  - count: how many times to repeat this step (default: 1)
+  - delay_seconds: wait between iterations (default: 0)
+
+Budget: Add "budget" inside action_params for kausa_pay steps:
+  "action_params": { "pocket_id": "...", "url": "...", "max_amount_usdc": 0.01, "budget": { "max_daily_usdc": 0.50 } }
+  - max_daily_usdc: maximum total USDC to spend per day across all executions
+  - When budget is exceeded, the step stops and chain continues to next step
+
+Example: "Search 3 different queries with $0.50 daily limit"
+  Use loop count: 3 with budget max_daily_usdc: 0.50
+
+Spending is tracked per strategy per day in the strategy_spend table.
+
+## KausaPay (x402 Payments)
+You can pay x402-enabled API endpoints using USDC from pockets. This enables autonomous research, monitoring, and data retrieval.
+
+Strategy action_type "kausa_pay" params:
+  pocket_id: pocket to pay from (required)
+  url: x402 endpoint URL (required)
+  method: HTTP method - POST, GET, PUT (default: POST)
+  body: request body as JSON string
+  max_amount_usdc: maximum payment per call (default: 0.01)
+  notify: send result to user via Telegram (default: true)
+  notify_prefix: prefix for notification message
+  extract_field: specific JSON field to extract from response
+
+Direct tool "kausa_pay_now" for immediate one-off calls (same params minus notify).
+
+Example user requests:
+- "Search Solana news using Perplexity" -> use kausa_pay_now with Perplexity x402 endpoint
+- "Every 6 hours search Solana news and send me the result" -> create_strategy with action_type: kausa_pay
+- "Monitor KausaLayer mentions every 4 hours" -> create_strategy with kausa_pay + notify
+
+Example strategy:
+  name: "Solana News"
+  trigger_type: time_based
+  trigger_condition: "every:6h"
+  trigger_interval_seconds: 21600
+  action_type: kausa_pay
+  action_params: {
+    pocket_id: "pocket_xxx",
+    url: "https://pplx.x402.paysponge.com/search",
+    method: "POST",
+    body: "{\"query\":\"solana ecosystem news today\"}",
+    max_amount_usdc: 0.01,
+    notify: true,
+    notify_prefix: "Solana News"
+  }
+
 ## Maze Routing Configuration
 Users can customize their maze routing settings. Once set, the config applies to ALL maze operations (create pocket, sweep, route, P2P).
 
