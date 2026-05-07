@@ -311,23 +311,40 @@ async function actionKausaPay(
   const responseData = res.data;
 
   if (responseData) {
-    if (params.extract_field && responseData[params.extract_field]) {
-      extractedContent = String(responseData[params.extract_field]);
-    } else if (typeof responseData === 'string') {
-      extractedContent = responseData;
+    // Try to parse nested responsebody (x402 returns JSON string in responsebody)
+    let parsed = responseData;
+    if (typeof responseData.response_body === 'string') {
+      try { parsed = JSON.parse(responseData.response_body); } catch (_) { parsed = responseData; }
+    } else if (typeof responseData.responsebody === 'string') {
+      try { parsed = JSON.parse(responseData.responsebody); } catch (_) { parsed = responseData; }
+    } else if (typeof responseData.responseBody === 'string') {
+      try { parsed = JSON.parse(responseData.responseBody); } catch (_) { parsed = responseData; }
+    }
+
+    if (params.extract_field && parsed[params.extract_field]) {
+      extractedContent = String(parsed[params.extract_field]);
+    } else if (typeof parsed === 'string') {
+      extractedContent = parsed;
     } else {
       // Try common response fields
-      const commonFields = ['content', 'data', 'message', 'result', 'premiumContent', 'text', 'answer', 'response'];
+      const commonFields = ['content', 'snippet', 'text', 'answer', 'response', 'data', 'message', 'result', 'premiumContent'];
       for (const field of commonFields) {
-        if (responseData[field]) {
-          extractedContent = typeof responseData[field] === 'string'
-            ? responseData[field]
-            : JSON.stringify(responseData[field]);
+        if (parsed[field]) {
+          extractedContent = typeof parsed[field] === 'string'
+            ? parsed[field]
+            : JSON.stringify(parsed[field]);
           break;
         }
       }
+      // Try nested results array (Perplexity format)
+      if (!extractedContent && parsed.results && Array.isArray(parsed.results)) {
+        extractedContent = parsed.results
+          .map((r: any) => r.snippet || r.text || r.content || JSON.stringify(r))
+          .join('\n\n')
+          .slice(0, 2000);
+      }
       if (!extractedContent) {
-        extractedContent = JSON.stringify(responseData).slice(0, 500);
+        extractedContent = JSON.stringify(parsed).slice(0, 500);
       }
     }
   }

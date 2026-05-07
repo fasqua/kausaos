@@ -145,7 +145,7 @@ export class Notifier {
     if (!this.telegramBot) return;
     try {
       await this.telegramBot.sendMessage(parseInt(chatId), message, {
-        parse_mode: 'Markdown',
+        parse_mode: 'HTML',
       }).catch(async () => {
         await this.telegramBot!.sendMessage(parseInt(chatId), message);
       });

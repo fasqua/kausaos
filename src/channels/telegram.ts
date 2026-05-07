@@ -101,10 +101,10 @@ export class TelegramChannel {
     if (existing) {
       await this.bot.sendMessage(chatId,
         `Welcome back! Your KausaOS account is active.\n\n` +
-        `*Wallet:* \`${existing.wallet_address}\`\n` +
-        `*Tier:* ${existing.tier}\n\n` +
+        `<b>Wallet:</b> <code>${existing.wallet_address}</code>\n` +
+        `<b>Tier:</b> ${existing.tier}\n\n` +
         `Send me a message or use /help to see commands.`,
-        { parse_mode: 'Markdown' }
+        { parse_mode: 'HTML' }
       );
       return;
     }
@@ -135,24 +135,24 @@ export class TelegramChannel {
 
     await this.bot.sendMessage(chatId,
       `Your KausaOS account is ready!\n\n` +
-      `*Wallet:* \`${result.wallet_address}\`\n` +
-      `_(this is your identity wallet for authentication)_\n\n` +
-      `*API Key:* \`${result.api_key}\`\n` +
-      `_(you can also use this with MCP servers)_\n\n` +
+      `<b>Wallet:</b> <code>${result.wallet_address}</code>\n` +
+      `<i>this is your identity wallet for authentication</i>\n\n` +
+      `<b>API Key:</b> <code>${result.api_key}</code>\n` +
+      `<i>you can also use this with MCP servers</i>\n\n` +
       `To start using KausaOS:\n` +
       `• Type \"create pocket 0.1\" to create a stealth wallet\n` +
       `• You will receive a deposit address to fund it\n` +
       `• Send SOL from any wallet (Phantom, exchange, etc.)\n` +
       `• Once funded, trade, swap, and automate privately\n\n` +
       `I am running 24/7 for you.`,
-      { parse_mode: 'Markdown' }
+      { parse_mode: 'HTML' }
     );
 
     // Send private key as self-destructing message (60 seconds)
     const pkMsg = await this.bot.sendMessage(chatId,
-      `*Your Private Key (backup):*\n\`${result.private_key}\`\n\n` +
-      `_Save this now. This message will be deleted in 60 seconds._`,
-      { parse_mode: 'Markdown' }
+      `<b>Your Private Key (backup):</b>\n<code>${result.private_key}</code>\n\n` +
+      `<i>Save this now. This message will be deleted in 60 seconds.</i>`,
+      { parse_mode: 'HTML' }
     ).catch(async () => {
       return await this.bot.sendMessage(chatId,
         `Your Private Key (backup):\n${result.private_key}\n\nSave this now. This message will be deleted in 60 seconds.`
@@ -228,8 +228,8 @@ export class TelegramChannel {
     await this.bot.sendMessage(chatId,
       'Are you sure you want to export your private key?\n' +
       'This will be sent as a self-destructing message.\n\n' +
-      'Reply *YES* to confirm.',
-      { parse_mode: 'Markdown' }
+      'Reply <b>YES</b> to confirm.',
+      { parse_mode: 'HTML' }
     );
 
     // Listen for confirmation
@@ -244,8 +244,8 @@ export class TelegramChannel {
       if (result.success) {
         // Send with auto-delete (message_effect_id not available, use manual delete)
         this.bot.sendMessage(chatId,
-          `*Private Key:*\n\`${result.private_key}\`\n\n_This message will be deleted in 60 seconds._`,
-          { parse_mode: 'Markdown' }
+          `<b>Private Key:</b>\n<code>${result.private_key}</code>\n\n<i>This message will be deleted in 60 seconds.</i>`,
+          { parse_mode: 'HTML' }
         ).then((sentMsg) => {
           // Auto-delete after 60 seconds
           setTimeout(() => {
@@ -271,7 +271,7 @@ export class TelegramChannel {
   private async handleHelp(msg: TelegramBot.Message): Promise<void> {
     const chatId = msg.chat.id;
     await this.bot.sendMessage(chatId,
-      `*KausaOS Commands:*\n\n` +
+      `<b>KausaOS Commands:</b>\n\n` +
       `/start - Set up or show account\n` +
       `/portfolio - Portfolio summary with PnL\n` +
       `/pockets - List active pockets\n` +
@@ -286,7 +286,7 @@ export class TelegramChannel {
       `• "Buy BONK with 0.1 SOL"\n` +
       `• "Set take profit at 3x for BONK"\n` +
       `• "Sweep everything to my main wallet"`,
-      { parse_mode: 'Markdown' }
+      { parse_mode: 'HTML' }
     );
   }
 
@@ -296,9 +296,9 @@ export class TelegramChannel {
   private async handleSettings(msg: TelegramBot.Message): Promise<void> {
     const chatId = msg.chat.id;
     await this.bot.sendMessage(chatId,
-      '*Settings:*\n\n' +
+      '<b>Settings:</b>\n\n' +
       'Settings are coming soon. For now, everything works with defaults.',
-      { parse_mode: 'Markdown' }
+      { parse_mode: 'HTML' }
     );
   }
 
@@ -378,11 +378,11 @@ export class TelegramChannel {
           lastStatus = 'funded';
           await this.bot.sendMessage(chatId,
             `Deposit received! Maze routing complete.\n\n` +
-            `Pocket: \`${pocketId}\`\n` +
+            `Pocket: <code>${pocketId}</code>\n` +
             `Balance: ${balance} SOL\n` +
             `Status: Active and funded\n\n` +
             `Your pocket is ready for trading, swaps, and transfers.`,
-            { parse_mode: 'Markdown' }
+            { parse_mode: 'HTML' }
           ).catch(async () => {
             await this.bot.sendMessage(chatId,
               `Deposit received! Pocket ${pocketId} funded with ${balance} SOL. Ready for trading.`
@@ -420,12 +420,18 @@ export class TelegramChannel {
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
+    // Convert Markdown bold/italic/code from LLM response to HTML
+    text = text
+      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+      .replace(/\*(.+?)\*/g, '<i>$1</i>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>');
+
     if (!text) return; // Don't send empty messages
 
     const MAX_LENGTH = 4000;
 
     if (text.length <= MAX_LENGTH) {
-      await this.bot.sendMessage(chatId, text, { parse_mode: 'Markdown' }).catch(async () => {
+      await this.bot.sendMessage(chatId, text, { parse_mode: 'HTML' }).catch(async () => {
         // Fallback without Markdown if parsing fails
         await this.bot.sendMessage(chatId, text);
       });
@@ -452,7 +458,7 @@ export class TelegramChannel {
     }
 
     for (const chunk of chunks) {
-      await this.bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' }).catch(async () => {
+      await this.bot.sendMessage(chatId, chunk, { parse_mode: 'HTML' }).catch(async () => {
         await this.bot.sendMessage(chatId, chunk);
       });
     }
@@ -463,7 +469,7 @@ export class TelegramChannel {
    */
   async sendNotification(telegramId: string, message: string): Promise<boolean> {
     try {
-      await this.bot.sendMessage(parseInt(telegramId), message, { parse_mode: 'Markdown' }).catch(async () => {
+      await this.bot.sendMessage(parseInt(telegramId), message, { parse_mode: 'HTML' }).catch(async () => {
         await this.bot.sendMessage(parseInt(telegramId), message);
       });
       return true;
