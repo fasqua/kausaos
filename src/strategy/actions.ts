@@ -327,7 +327,7 @@ async function actionKausaPay(
       extractedContent = parsed;
     } else {
       // Try common response fields
-      const commonFields = ['content', 'snippet', 'text', 'answer', 'response', 'data', 'message', 'result', 'premiumContent'];
+      const commonFields = ['content', 'snippet', 'text', 'answer', 'response', 'data', 'message', 'result', 'premiumContent', 'token', 'access_token', 'jwt', 'session_token'];
       for (const field of commonFields) {
         if (parsed[field]) {
           extractedContent = typeof parsed[field] === 'string'
@@ -354,6 +354,22 @@ async function actionKausaPay(
     extractedContent = extractedContent.slice(0, 2000) + '...';
   }
 
+  // If response contains a token/credential, prepend it prominently
+  // so LLM cannot accidentally summarize it away
+  const tokenFields = ['token', 'access_token', 'jwt', 'session_token', 'api_key', 'key', 'credential'];
+  let tokenParsed = responseData;
+  if (typeof responseData?.response_body === 'string') {
+    try { tokenParsed = JSON.parse(responseData.response_body); } catch (_) {}
+  }
+  if (tokenParsed && typeof tokenParsed === 'object') {
+    for (const tf of tokenFields) {
+      if (tokenParsed[tf] && typeof tokenParsed[tf] === 'string') {
+        extractedContent = `API_TOKEN: ${tokenParsed[tf]}\n\nFull response: ${extractedContent}`;
+        break;
+      }
+    }
+  }
+
   // Auto-notify if enabled
   if (params.notify !== false && notifier) {
     const prefix = params.notify_prefix || 'KausaPay Result';
@@ -363,10 +379,12 @@ async function actionKausaPay(
     });
   }
 
+  // Include full response_body so LLM/user can see raw API response (tokens, data, etc.)
+  const fullResponse = responseData?.response_body || responseData?.responsebody || '';
   return {
     success: true,
     message: extractedContent,
-    data: { content: extractedContent, raw: responseData },
+    data: { content: extractedContent, raw: responseData, response_body: fullResponse },
   };
 }
 
