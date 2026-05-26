@@ -39,6 +39,10 @@ export interface NotificationConfig {
   webhooks: string[];
 }
 
+export interface ConduitConfig {
+  enabled: boolean;
+}
+
 export interface KausaOSConfig {
   llm: LlmConfig;
   kausalayer: KausaLayerConfig;
@@ -51,6 +55,7 @@ export interface KausaOSConfig {
   dashboard: DashboardConfig;
   database: DatabaseConfig;
   notifications?: NotificationConfig;
+  conduit?: ConduitConfig;
 }
 
 const CONFIG_FILE = 'kausaos.json';

@@ -599,6 +599,59 @@ export const allTools: ToolDefinition[] = [
       required: ['pocket_id', 'url'],
     },
   },
+
+  // --- Paid API Catalog (2) ---
+  {
+    name: 'search_paid_apis',
+    description: 'Search the pay.sh catalog for paid API providers that match a task. Returns provider name, description, category, service URL, and pricing. Use this when the user asks for data, services, or API access that might be available as a paid endpoint.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query describing the task (e.g. "instagram data", "translate text", "crypto prices")' },
+        category: { type: 'string', description: 'Optional category filter (ai_ml, data, media, messaging, search, compute, maps, translation, security, finance, shopping, storage, devtools, cloud)' },
+        max_results: { type: 'number', description: 'Max results to return (default: 5)' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'get_api_details',
+    description: 'Get detailed endpoint info for a specific paid API provider. Returns full usage notes, endpoint paths, methods, pricing, and request body format. Use after search_paid_apis to get the exact URL and parameters needed for kausa_pay_now.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        fqn: { type: 'string', description: 'Provider FQN from search results (e.g. "paysponge/wolframalpha", "merit-systems/stablesocial/social-data")' },
+      },
+      required: ['fqn'],
+    },
+  },
+
+  // --- Conduit Protocol (2) ---
+  {
+    name: 'conduit_discover',
+    description: 'Discover available external capabilities on Conduit marketplace (inference, compute, scraping, translation, OCR, etc.). Returns providers with pricing and resource IDs. Use when agent needs external AI services and no specific URL is given.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pocket_id: { type: 'string', description: 'Any active pocket ID (used for API routing)' },
+        category: { type: 'string', description: 'Optional filter: ai, agent, compute, data, storage, workflow, gpu, etc.' },
+      },
+      required: ['pocket_id'],
+    },
+  },
+  {
+    name: 'conduit_call',
+    description: 'Call an external capability on Conduit marketplace. Payment in USDC from pocket stealth address. Requires pocket_id with USDC balance and resource_id from conduit_discover.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pocket_id: { type: 'string', description: 'Pocket ID to pay from (must have USDC balance)' },
+        resource_id: { type: 'number', description: 'Capability resource ID from conduit_discover results' },
+        payload: { type: 'object', description: 'Request payload for the capability (e.g. { "prompt": "..." })' },
+      },
+      required: ['pocket_id', 'resource_id', 'payload'],
+    },
+  },
 ];
 
 // ============================================================
@@ -1090,6 +1143,116 @@ export async function executeTool(
         break;
       }
 
+      // Paid API Catalog
+      case 'search_paid_apis': {
+        const fs = await import('fs');
+        const catalogPath = '/root/kausaos/data/pay-catalog.json';
+        try {
+          const raw = fs.readFileSync(catalogPath, 'utf-8');
+          const catalog = JSON.parse(raw);
+          const query = (input.query as string || '').toLowerCase();
+          const category = (input.category as string || '').toLowerCase();
+          const maxResults = (input.max_results as number) || 5;
+
+          const scored = catalog.map((entry: any) => {
+            let score = 0;
+            const words = query.split(/\s+/);
+            for (const word of words) {
+              if (word.length < 2) continue;
+              if (entry.title?.toLowerCase().includes(word)) score += 3;
+              if (entry.name?.toLowerCase().includes(word)) score += 3;
+              if (entry.description?.toLowerCase().includes(word)) score += 2;
+              if (entry.use_case?.toLowerCase().includes(word)) score += 1;
+            }
+            if (category && entry.category?.toLowerCase() !== category) score = 0;
+            return { ...entry, score };
+          })
+          .filter((e: any) => e.score > 0)
+          .sort((a: any, b: any) => b.score - a.score)
+          .slice(0, maxResults)
+          .map((e: any) => ({
+            name: e.title,
+            fqn: e.fqn,
+            category: e.category,
+            description: e.description,
+            service_url: e.service_url,
+            pricing: e.pricing || [],
+            use_case: e.use_case,
+          }));
+
+          result = { success: true, data: { results: scored, total_catalog: catalog.length, query } };
+        } catch (err: any) {
+          result = { success: false, error: `Catalog search failed: ${err.message}` };
+        }
+        break;
+      }
+      case 'get_api_details': {
+        const fs = await import('fs');
+        const fqn = input.fqn as string;
+        if (!fqn) { result = { success: false, error: 'fqn is required' }; break; }
+
+        const payMdPath = `/root/pay-skills/providers/${fqn}/PAY.md`;
+        try {
+          const mdContent = fs.readFileSync(payMdPath, 'utf-8');
+
+          // Parse frontmatter
+          const fmMatch = mdContent.match(/^---\s*\n([\s\S]*?)\n---/);
+          const frontmatter = fmMatch ? fmMatch[1] : '';
+          const body = fmMatch ? mdContent.slice(fmMatch[0].length).trim() : mdContent;
+
+          // Extract service_url from frontmatter
+          const urlMatch = frontmatter.match(/service_url:\s*(.+)/);
+          const serviceUrl = urlMatch ? urlMatch[1].trim() : '';
+
+          // Try to read openapi.json
+          let endpoints: any[] = [];
+          const openapiLocal = `/root/pay-skills/providers/${fqn}/openapi.json`;
+          if (fs.existsSync(openapiLocal)) {
+            try {
+              const openapiRaw = fs.readFileSync(openapiLocal, 'utf-8');
+              const openapi = JSON.parse(openapiRaw);
+              if (openapi.paths) {
+                for (const [path, methods] of Object.entries(openapi.paths)) {
+                  for (const [method, spec] of Object.entries(methods as any)) {
+                    if (['get', 'post', 'put', 'patch', 'delete'].includes(method)) {
+                      const s = spec as any;
+                      endpoints.push({
+                        path,
+                        method: method.toUpperCase(),
+                        summary: s.summary || s.description || '',
+                        parameters: s.parameters?.map((p: any) => ({ name: p.name, in: p.in, required: p.required, description: p.description })) || [],
+                      });
+                    }
+                  }
+                }
+              }
+            } catch (_) {}
+          }
+
+          // Extract openapi URL and version from frontmatter
+          const openapiUrlMatch = frontmatter.match(/url:\s*(.+)/);
+          const openapiUrl = openapiUrlMatch ? openapiUrlMatch[1].trim() : '';
+          const versionMatch = frontmatter.match(/version:\s*(.+)/);
+          const version = versionMatch ? versionMatch[1].trim() : '';
+
+          result = {
+            success: true,
+            data: {
+              fqn,
+              service_url: serviceUrl,
+              version,
+              openapi_url: openapiUrl,
+              usage_notes: body.slice(0, 1500),
+              endpoints: endpoints.slice(0, 20),
+              has_openapi: endpoints.length > 0,
+            },
+          };
+        } catch (err: any) {
+          result = { success: false, error: `Provider not found: ${fqn}. ${err.message}` };
+        }
+        break;
+      }
+
       // KausaPay
       case 'kausa_pay_now': {
         const kpRes = await apiClient.kausaPay(input.pocket_id as string, {
@@ -1101,24 +1264,101 @@ export async function executeTool(
         if (kpRes.success && kpRes.data) {
           let extracted = '';
           const rd = kpRes.data;
-          if (input.extract_field && rd[input.extract_field as string]) {
-            extracted = String(rd[input.extract_field as string]);
-          } else if (typeof rd === 'string') {
-            extracted = rd;
-          } else {
-            const fields = ['content', 'data', 'message', 'result', 'premiumContent', 'text', 'answer', 'response'];
-            for (const f of fields) {
-              if (rd[f]) {
-                extracted = typeof rd[f] === 'string' ? rd[f] : JSON.stringify(rd[f]);
-                break;
-              }
+
+          // Parse nested response_body (backend returns JSON string inside response_body)
+          let parsed = rd;
+          if (typeof rd.response_body === 'string') {
+            try { parsed = JSON.parse(rd.response_body); } catch (_) {
+              // response_body might be plain text (e.g. "343 million people")
+              extracted = rd.response_body.replace(/^"|"$/g, '');
             }
-            if (!extracted) extracted = JSON.stringify(rd).slice(0, 500);
           }
+
+          if (!extracted) {
+            if (input.extract_field && parsed[input.extract_field as string]) {
+              extracted = String(parsed[input.extract_field as string]);
+            } else if (typeof parsed === 'string') {
+              extracted = parsed;
+            } else {
+              const fields = ['content', 'data', 'message', 'result', 'premiumContent', 'text', 'answer', 'response', 'token', 'access_token'];
+              for (const f of fields) {
+                if (parsed[f]) {
+                  extracted = typeof parsed[f] === 'string' ? parsed[f] : JSON.stringify(parsed[f]);
+                  break;
+                }
+              }
+              if (!extracted) extracted = JSON.stringify(parsed).slice(0, 500);
+            }
+          }
+
           if (extracted.length > 2000) extracted = extracted.slice(0, 2000) + '...';
-          result = { success: true, data: { content: extracted, raw: rd } };
+
+          // Return clean data: content + payment metadata (no raw dump)
+          result = {
+            success: true,
+            data: {
+              content: extracted,
+              amount_paid: rd.amount_paid_usdc || rd.amount_paid || 0,
+              protocol: rd.protocol_used || 'x402',
+              token_symbol: rd.token_symbol || 'USDC',
+              tx_signature: rd.payment_signature || rd.tx_signature || null,
+            },
+          };
         } else {
           result = kpRes;
+        }
+        break;
+      }
+
+      // Conduit Protocol
+      case 'conduit_discover': {
+        const cdRes = await apiClient.conduitDiscover(input.pocket_id as string, {
+          category: input.category as string | undefined,
+        });
+        if (cdRes.success && cdRes.data) {
+          const d = cdRes.data;
+          // Summarize for LLM: show endpoints with top 3 providers each
+          const endpoints = (d.endpoints || []).map((ep: any) => ({
+            capability: ep.capabilityName || ep.capability,
+            path: ep.path,
+            unit: ep.unit,
+            providers: (ep.providers || []).slice(0, 3).map((p: any) => ({
+              id: p.id, name: p.name, price: p.pricePerUnit,
+            })),
+            total_providers: (ep.providers || []).length,
+          }));
+          result = {
+            success: true,
+            data: {
+              network: d.network,
+              asset: d.asset,
+              endpoint_count: d.endpoint_count,
+              api_listing_count: d.api_listing_count,
+              endpoints,
+            },
+          };
+        } else {
+          result = cdRes;
+        }
+        break;
+      }
+      case 'conduit_call': {
+        const ccRes = await apiClient.conduitCall(input.pocket_id as string, {
+          resource_id: input.resource_id,
+          payload: input.payload || {},
+          password: '',
+        });
+        if (ccRes.success && ccRes.data) {
+          result = {
+            success: true,
+            data: {
+              status: ccRes.data.status,
+              body: ccRes.data.body,
+              signature: ccRes.data.signature,
+            },
+          };
+        } else {
+          result = ccRes;
         }
         break;
       }

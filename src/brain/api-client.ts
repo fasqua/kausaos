@@ -399,4 +399,19 @@ export class KausaLayerClient {
   }): Promise<ApiResponse> {
     return this.request('post', `/pocket/${pocketId}/pay`, params);
   }
+
+  // === Conduit Protocol (capability marketplace) ===
+  async conduitDiscover(pocketId: string, params: {
+    category?: string;
+  }): Promise<ApiResponse> {
+    return this.request('post', `/pocket/${pocketId}/conduit/discover`, params);
+  }
+
+  async conduitCall(pocketId: string, params: {
+    resource_id: any;
+    payload: any;
+    password: string;
+  }): Promise<ApiResponse> {
+    return this.request('post', `/pocket/${pocketId}/conduit/call`, params);
+  }
 }
