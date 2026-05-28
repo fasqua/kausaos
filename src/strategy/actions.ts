@@ -46,6 +46,8 @@ export async function executeAction(
         return await actionKausaPay(action_params, apiClient, notifier);
       case 'llm_analyze':
         return await actionLlmAnalyze(action_params, llmProvider);
+      case 'fund_usepod':
+        return await actionFundUsePod(action_params, apiClient, notifier);
       default:
         return { success: false, message: `Unknown action type: ${action_type}` };
     }
@@ -419,4 +421,52 @@ async function actionLlmAnalyze(
   } catch (err: any) {
     return { success: false, message: 'LLM analysis failed: ' + err.message };
   }
+}
+
+
+async function actionFundUsePod(
+  params: Record<string, any>,
+  apiClient: KausaLayerClient,
+  notifier?: Notifier
+): Promise<ActionResult> {
+  const pocketId = params.pocket_id;
+  const amountSol = params.amount_sol || 0.1;
+
+  if (!pocketId) {
+    return { success: false, message: 'fund_usepod requires pocket_id' };
+  }
+
+  // Step 1: Check if UsePod token is registered, if not register
+  const pocketRes = await apiClient.getPocket(pocketId);
+  if (!pocketRes.success) {
+    return { success: false, message: `Pocket not found: ${pocketRes.error}` };
+  }
+
+  const pocket = pocketRes.data?.pocket || pocketRes.data;
+  if (!pocket.usepod_token) {
+    // Auto-register
+    const regRes = await apiClient.usepodRegister(pocketId);
+    if (!regRes.success) {
+      return { success: false, message: `UsePod register failed: ${regRes.error}` };
+    }
+  }
+
+  // Step 2: Fund UsePod
+  const fundRes = await apiClient.usepodFund(pocketId, { amount_sol: amountSol });
+  if (!fundRes.success) {
+    return { success: false, message: `UsePod fund failed: ${fundRes.error}` };
+  }
+
+  const usdcAmount = fundRes.data?.usdc_amount || 0;
+  const message = `UsePod funded: ${usdcAmount.toFixed(2)} USDC from pocket ${pocketId}`;
+
+  // Notify if configured
+  if (notifier) {
+    await notifier.send(message, {
+      action: 'fund_usepod',
+      success: true,
+    });
+  }
+
+  return { success: true, message, data: fundRes.data };
 }

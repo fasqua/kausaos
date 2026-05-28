@@ -33,6 +33,7 @@ export interface TriggerState {
     average_buy_price_usd: number;
   }>;
   tokenPrices: Map<string, TokenPriceInfo>;
+  usepodBalance: number | null;
 }
 
 export interface TriggerResult {
@@ -129,6 +130,7 @@ function detectTriggerType(condition: string): TriggerType {
   if (condition.includes('idle')) return 'idle_time';
   if (condition.includes('active_pockets') || condition.includes('pocket_count')) return 'pocket_count';
   if (condition.includes('token_up') || condition.includes('token_down') || condition.includes('token_price')) return 'token_price';
+  if (condition.includes('usepod_balance')) return 'usepod_balance';
   return 'balance_threshold'; // default
 }
 
@@ -158,6 +160,8 @@ async function evaluateSingleTrigger(
       return evaluateTokenPrice(condition, state);
     case 'schedule':
       return evaluateSchedule(condition, strategy);
+    case 'usepod_balance':
+      return evaluateUsePodBalance(condition, state);
     default:
       return { triggered: false, reason: `Unknown trigger type: ${triggerType}` };
   }
@@ -547,6 +551,7 @@ export async function fetchTriggerState(
     pendingOperations: await getPendingCount(apiClient, opsMonitor),
     portfolioPositions: [],
     tokenPrices: new Map(),
+    usepodBalance: null,
   };
 }
 
@@ -560,6 +565,46 @@ async function getPendingCount(apiClient: KausaLayerClient, opsMonitor?: Operati
   }
 }
 
+
+/**
+ * usepod_balance: "usepod_balance < 1.0" or "usepod_balance > 5.0"
+ * Compares UsePod inference token balance (USDC) against threshold
+ * Balance tracked from X-Balance-Remaining response header
+ */
+function evaluateUsePodBalance(condition: string, state: TriggerState): TriggerResult {
+  const match = condition.match(/usepod_balance\s*(>|<|>=|<=|==)\s*([\d.]+)/);
+  if (!match) {
+    return { triggered: false, reason: `Invalid usepod_balance condition: ${condition}` };
+  }
+
+  const operator = match[1];
+  const threshold = parseFloat(match[2]);
+
+  if (state.usepodBalance === null) {
+    return { triggered: false, reason: 'UsePod balance not available (no recent inference call)' };
+  }
+
+  const balance = state.usepodBalance;
+  let met = false;
+  switch (operator) {
+    case '>': met = balance > threshold; break;
+    case '<': met = balance < threshold; break;
+    case '>=': met = balance >= threshold; break;
+    case '<=': met = balance <= threshold; break;
+    case '==': met = balance === threshold; break;
+  }
+
+  if (met) {
+    return {
+      triggered: true,
+      reason: `UsePod balance ${balance.toFixed(4)} USDC meets: ${condition}`,
+    };
+  }
+  return {
+    triggered: false,
+    reason: `UsePod balance ${balance.toFixed(4)} USDC, condition: ${condition}`,
+  };
+}
 
 /**
  * schedule: one-time execution at a specific time

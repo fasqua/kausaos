@@ -414,4 +414,16 @@ export class KausaLayerClient {
   }): Promise<ApiResponse> {
     return this.request('post', `/pocket/${pocketId}/conduit/call`, params);
   }
+
+  // === UsePod Integration ===
+  async usepodRegister(pocketId: string): Promise<ApiResponse> {
+    return this.request('post', `/pocket/${pocketId}/usepod/register`);
+  }
+
+  async usepodFund(pocketId: string, params: {
+    amount_sol: number;
+  }): Promise<ApiResponse> {
+    return this.request('post', `/pocket/${pocketId}/usepod/fund`, params);
+  }
+
 }

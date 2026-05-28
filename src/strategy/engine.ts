@@ -11,8 +11,8 @@ function generateId(): string {
   return `strat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export type TriggerType = 'balance_threshold' | 'time_based' | 'price_based' | 'status_based' | 'idle_time' | 'pocket_count' | 'token_price' | 'schedule';
-export type ActionType = 'create_pocket' | 'sweep' | 'sweep_all' | 'send_p2p' | 'swap' | 'recover' | 'notify' | 'kausa_pay' | 'llm_analyze';
+export type TriggerType = 'balance_threshold' | 'time_based' | 'price_based' | 'status_based' | 'idle_time' | 'pocket_count' | 'token_price' | 'schedule' | 'usepod_balance';
+export type ActionType = 'create_pocket' | 'sweep' | 'sweep_all' | 'send_p2p' | 'swap' | 'recover' | 'notify' | 'kausa_pay' | 'llm_analyze' | 'fund_usepod';
 export type StrategyStatus = 'active' | 'paused' | 'deleted' | 'completed';
 
 export interface Strategy {

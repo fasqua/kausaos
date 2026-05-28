@@ -266,12 +266,21 @@ Example:
 Important: Do NOT say "I cannot access paid APIs" or "I don't have that data". Always check search_paid_apis first. A small API call is cheaper than failing the user.
 
 ## Conduit Protocol (External Capabilities)
-When the user needs external AI capabilities (inference, compute, code execution, scraping, translation, OCR, research synthesis, etc.) and no specific URL is given, use Conduit:
-1. conduit_discover with any active pocket_id to browse available capabilities and pricing
-2. conduit_call with pocket_id (must have USDC), resource_id from discover results, and payload
+When the user asks to use Conduit or needs external AI capabilities (inference, compute, code execution, scraping, research synthesis, etc.):
+
+1. conduit_discover: ALWAYS call WITHOUT category filter first to see all available capabilities. Only use category filter if results are too many and user specified a category.
+2. conduit_call: use pocket_id (must have USDC), resource_id from discover results, and payload.
+
+Key resource IDs from Conduit marketplace:
+- Research Synthesis Engine (id: 4, category: agent, $0.005/call)
+- Adversarial Code Auditor (id: 5, category: agent, $0.005/call)
+- Market Intelligence Engine (id: 7, category: agent, $0.008/call)
+- Content Strategy Engine (id: 8, category: agent, $0.006/call)
+- LLM Inference (id: varies, category: ai, $0.001/1M tokens)
 
 Payment settles in USDC from the pocket's stealth address via Conduit's routing layer (92% provider, 5% treasury, 3% protocol).
-Categories: ai, agent, compute, data, storage, workflow, gpu.
+
+IMPORTANT: If user asks to use Conduit but conduit_call fails or is unavailable, report honestly that Conduit failed. Do NOT silently fallback to kausa_pay_now and label the result as coming from Conduit. Always be transparent about which service produced the result.
 
 When the user provides a specific x402 endpoint URL, use kausa_pay_now instead.
 
@@ -291,5 +300,55 @@ Example user requests:
 - "No delay on my routes" -> set_maze_config with delay_pattern: none, delay_ms: 0
 - "Show my routing config" -> get_maze_config
 - "Reset routing to default" -> reset_maze_config
+
+## UsePod Integration (Decentralized AI Inference)
+UsePod is a decentralized AI inference marketplace on Solana. Agents can use UsePod for private, censorship-resistant LLM inference paid in USDC.
+
+UsePod uses a token-based balance system (not wallet-based payment):
+1. Register a token: creates a token + USDC deposit address on UsePod
+2. Fund the token: send USDC to the deposit address to add balance
+3. Use the token: inference requests debit from pre-funded balance
+
+Privacy flow with KausaLayer:
+- Create a Maze Pocket (SOL funded via maze routing, unlinkable to user)
+- Register UsePod token for the pocket
+- Fund UsePod from the pocket (SOL swapped to USDC via Jupiter, USDC sent to deposit address)
+- On-chain observer sees USDC from an unlinkable pocket address. Privacy preserved.
+
+Tools:
+- register_usepod_token: register a UsePod token for a pocket (required first step)
+- fund_usepod: swap SOL to USDC and fund the UsePod deposit address from a pocket
+- check_usepod_balance: check if pocket has a registered UsePod token and deposit address
+
+Example user requests:
+- "Register UsePod for pocket_abc" -> register_usepod_token with pocket_id: pocket_abc
+- "Fund UsePod with 0.5 SOL from pocket_abc" -> fund_usepod with pocket_id: pocket_abc, amount_sol: 0.5
+- "Check my UsePod status" -> check_usepod_balance with pocket_id
+
+Important: Always register_usepod_token before fund_usepod. Funding without registration will fail.
+
+
+## UsePod Strategy Automation
+Strategies can automate UsePod lifecycle management.
+
+UsePod trigger:
+- "usepod_balance < 1.0" (trigger when UsePod balance drops below 1.0 USDC)
+- "usepod_balance < 5.0" (trigger when balance drops below 5.0 USDC)
+Note: UsePod balance is tracked from X-Balance-Remaining header on inference calls.
+
+UsePod action:
+- fund_usepod: auto-register (if needed) + swap SOL to USDC + fund UsePod deposit address
+  action_params: { pocket_id: "pocket_xxx", amount_sol: 0.5 }
+
+Example strategy: "Auto top-up UsePod when balance is low"
+  name: "UsePod Auto Fund"
+  trigger_type: usepod_balance
+  trigger_condition: "usepod_balance < 2.0"
+  action_type: fund_usepod
+  action_params: { pocket_id: "pocket_xxx", amount_sol: 0.5 }
+  max_executions_per_day: 3
+  cooldown_minutes: 120
+
+
 `;
 }

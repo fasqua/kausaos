@@ -390,14 +390,14 @@ export const allTools: ToolDefinition[] = [
         name: { type: 'string', description: 'Strategy name' },
         trigger_type: {
           type: 'string',
-          enum: ['balance_threshold', 'time_based', 'price_based', 'status_based', 'idle_time', 'pocket_count', 'schedule'],
+          enum: ['balance_threshold', 'time_based', 'price_based', 'status_based', 'idle_time', 'pocket_count', 'schedule', 'usepod_balance'],
           description: 'Type of trigger condition',
         },
         trigger_condition: { type: 'string', description: 'Condition expression (e.g., "pocket.balance > 0.5")' },
         trigger_interval_seconds: { type: 'number', description: 'How often to check (default: 60)' },
         action_type: {
           type: 'string',
-          enum: ['create_pocket', 'sweep', 'sweep_all', 'send_p2p', 'swap', 'recover', 'notify', 'kausa_pay', 'llm_analyze'],
+          enum: ['create_pocket', 'sweep', 'sweep_all', 'send_p2p', 'swap', 'recover', 'notify', 'kausa_pay', 'llm_analyze', 'fund_usepod'],
           description: 'Action to execute when triggered',
         },
         action_params: { type: 'object', description: 'Parameters for the action' },
@@ -454,10 +454,10 @@ export const allTools: ToolDefinition[] = [
       properties: {
         strategy_id: { type: 'string', description: 'Strategy ID to update' },
         name: { type: 'string', description: 'New name' },
-        trigger_type: { type: 'string', enum: ['balance_threshold', 'time_based', 'price_based', 'status_based', 'idle_time', 'pocket_count', 'schedule'], description: 'New trigger type' },
+        trigger_type: { type: 'string', enum: ['balance_threshold', 'time_based', 'price_based', 'status_based', 'idle_time', 'pocket_count', 'schedule', 'usepod_balance'], description: 'New trigger type' },
         trigger_condition: { type: 'string', description: 'New trigger condition' },
         trigger_interval_seconds: { type: 'number', description: 'New check interval' },
-        action_type: { type: 'string', enum: ['create_pocket', 'sweep', 'sweep_all', 'send_p2p', 'swap', 'recover', 'notify', 'kausa_pay', 'llm_analyze'], description: 'New action type' },
+        action_type: { type: 'string', enum: ['create_pocket', 'sweep', 'sweep_all', 'send_p2p', 'swap', 'recover', 'notify', 'kausa_pay', 'llm_analyze', 'fund_usepod'], description: 'New action type' },
         action_params: { type: 'object', description: 'New action parameters' },
         max_executions_per_day: { type: 'number', description: 'New daily limit' },
         cooldown_minutes: { type: 'number', description: 'New cooldown period' },
@@ -652,6 +652,43 @@ export const allTools: ToolDefinition[] = [
       required: ['pocket_id', 'resource_id', 'payload'],
     },
   },
+
+  // --- UsePod Integration (3) ---
+  {
+    name: 'register_usepod_token',
+    description: 'Register a UsePod inference token for a pocket. Creates a token with a USDC deposit address on UsePod marketplace. Required before funding.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pocket_id: { type: 'string', description: 'Pocket ID to register UsePod token for' },
+      },
+      required: ['pocket_id'],
+    },
+  },
+  {
+    name: 'fund_usepod',
+    description: 'Fund a UsePod token balance from a pocket. Swaps SOL to USDC via Jupiter, then transfers USDC to UsePod deposit address. Pocket must have a registered UsePod token.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pocket_id: { type: 'string', description: 'Pocket ID to fund from (must have registered UsePod token)' },
+        amount_sol: { type: 'number', description: 'Amount of SOL to convert to USDC and deposit (min 0.01)' },
+      },
+      required: ['pocket_id', 'amount_sol'],
+    },
+  },
+  {
+    name: 'check_usepod_balance',
+    description: 'Check the UsePod token info and deposit address for a pocket. Shows registered token and deposit address.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pocket_id: { type: 'string', description: 'Pocket ID to check UsePod info for' },
+      },
+      required: ['pocket_id'],
+    },
+  },
+
 ];
 
 // ============================================================
@@ -1362,6 +1399,39 @@ export async function executeTool(
         }
         break;
       }
+
+
+      // UsePod Integration
+      case 'register_usepod_token':
+        result = await apiClient.usepodRegister(input.pocket_id as string);
+        break;
+      case 'fund_usepod':
+        result = await apiClient.usepodFund(input.pocket_id as string, {
+          amount_sol: input.amount_sol as number,
+        });
+        break;
+      case 'check_usepod_balance': {
+        const pocketRes = await apiClient.getPocket(input.pocket_id as string);
+        if (pocketRes.success && pocketRes.data?.pocket) {
+          const p = pocketRes.data.pocket;
+          result = {
+            success: true,
+            data: {
+              pocket_id: input.pocket_id,
+              usepod_token: p.usepod_token || null,
+              usepod_deposit_address: p.usepod_deposit_address || null,
+              registered: !!p.usepod_token,
+              message: p.usepod_token
+                ? 'UsePod token registered. Use fund_usepod to add balance.'
+                : 'No UsePod token registered. Use register_usepod_token first.',
+            },
+          };
+        } else {
+          result = pocketRes;
+        }
+        break;
+      }
+
 
       default:
         result = { success: false, error: `Unknown tool: ${name}` };

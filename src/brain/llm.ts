@@ -232,6 +232,111 @@ export class OllamaProvider implements LlmProvider {
 }
 
 /**
+ * UsePod Provider
+ * Decentralized AI inference marketplace on Solana
+ * OpenAI-compatible API surface at /proxy/<token>/v1
+ * Auth via token in URL path, SDK api_key is ignored
+ * Docs: https://docs.usepod.ai/api/proxy/
+ */
+export class UsePodProvider implements LlmProvider {
+  static lastBalance: number | null = null;
+  static lastRoute: string | null = null;
+  private token: string;
+  private model: string;
+  private maxPriceInput?: number;
+  private maxPriceOutput?: number;
+
+  constructor(config: LlmConfig) {
+    this.token = config.api_key; // api_key field holds the UsePod token
+    this.model = config.model;
+    this.maxPriceInput = config.max_price_input;
+    this.maxPriceOutput = config.max_price_output;
+  }
+
+  async chat(
+    messages: LlmMessage[],
+    systemPrompt: string,
+    tools: ToolDefinition[],
+    _toolResults?: { name: string; result: string }[]
+  ): Promise<LlmResponse> {
+    const { default: OpenAI } = await import('openai');
+
+    // UsePod proxy: auth is token in URL path, api_key sent by SDK is ignored
+    const client = new OpenAI({
+      apiKey: 'unused',
+      baseURL: `https://api.usepod.ai/proxy/${this.token}/v1`,
+      defaultHeaders: {
+        ...(this.maxPriceInput !== undefined && { 'X-Pod-Max-Price-Input': String(this.maxPriceInput) }),
+        ...(this.maxPriceOutput !== undefined && { 'X-Pod-Max-Price-Output': String(this.maxPriceOutput) }),
+      },
+    });
+
+    // Build messages with system prompt
+    const apiMessages: Array<{ role: string; content: string }> = [
+      { role: 'system', content: systemPrompt },
+      ...messages
+        .filter((m) => m.role !== 'system')
+        .map((m) => ({ role: m.role, content: m.content })),
+    ];
+
+    // Convert tools to OpenAI format
+    const openaiTools = tools.map((t) => ({
+      type: 'function' as const,
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.input_schema,
+      },
+    }));
+
+    const response = await client.chat.completions.create({
+      model: this.model,
+      messages: apiMessages as any,
+      tools: openaiTools,
+      max_tokens: 4096,
+    });
+
+    // Log UsePod routing info from response headers
+    const headers = (response as any)?.headers || (response as any)?._response?.headers;
+    if (headers) {
+      const balanceRemaining = headers.get?.('x-balance-remaining') || headers['x-balance-remaining'];
+      const podRoute = headers.get?.('x-pod-route') || headers['x-pod-route'];
+      if (balanceRemaining !== undefined) {
+        console.log(`[UsePod] Balance remaining: ${balanceRemaining}`);
+        UsePodProvider.lastBalance = parseFloat(String(balanceRemaining));
+      }
+      if (podRoute) {
+        console.log(`[UsePod] Route: ${podRoute}`);
+        UsePodProvider.lastRoute = String(podRoute);
+      }
+    }
+
+    const choice = response.choices[0];
+    const text = choice.message?.content || '';
+    const toolCalls: ToolCall[] = [];
+
+    if (choice.message?.tool_calls) {
+      for (const tc of choice.message.tool_calls) {
+        toolCalls.push({
+          name: tc.function.name,
+          input: JSON.parse(tc.function.arguments),
+        });
+      }
+    }
+
+    const stopReason =
+      choice.finish_reason === 'tool_calls'
+        ? 'tool_use'
+        : choice.finish_reason === 'length'
+          ? 'max_tokens'
+          : 'end_turn';
+
+    return { text, tool_calls: toolCalls, stop_reason: stopReason };
+  }
+}
+
+
+/**
  * Factory: create LLM provider from config
  */
 export function createLlmProvider(config: LlmConfig): LlmProvider {
@@ -244,6 +349,8 @@ export function createLlmProvider(config: LlmConfig): LlmProvider {
       return new OpenRouterProvider(config);
     case 'ollama':
       return new OllamaProvider(config);
+    case 'usepod':
+      return new UsePodProvider(config);
     default:
       throw new Error(`Unsupported LLM provider: ${config.provider}`);
   }

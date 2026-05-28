@@ -25,6 +25,7 @@ export class Brain {
   private strategyEngine: any;
   private tokenPriceMonitor: any;
   private telegramId: string | undefined;
+  private usepodBalance: number | null;
 
   constructor(options: BrainOptions) {
     this.llm = createLlmProvider(options.config.llm);
@@ -36,6 +37,7 @@ export class Brain {
     this.strategyEngine = null;
     this.tokenPriceMonitor = null;
     this.telegramId = undefined;
+    this.usepodBalance = null;
     this.systemContext = {
       activePockets: 0,
       activeStrategies: 0,
@@ -63,6 +65,14 @@ export class Brain {
 
   setTokenPriceMonitor(monitor: any): void {
     this.tokenPriceMonitor = monitor;
+  }
+
+  setUsePodBalance(balance: number | null): void {
+    this.usepodBalance = balance;
+  }
+
+  getUsePodBalance(): number | null {
+    return this.usepodBalance;
   }
 
   setPriceData(data: any): void {

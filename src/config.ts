@@ -7,9 +7,13 @@ import fs from 'fs';
 import path from 'path';
 
 export interface LlmConfig {
-  provider: 'anthropic' | 'openai' | 'ollama' | 'openrouter';
+  provider: 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'usepod';
   model: string;
   api_key: string;
+  /** UsePod: max price per million input tokens (USDC microunits, 1 USDC = 1,000,000) */
+  max_price_input?: number;
+  /** UsePod: max price per million output tokens (USDC microunits) */
+  max_price_output?: number;
 }
 
 export interface KausaLayerConfig {
