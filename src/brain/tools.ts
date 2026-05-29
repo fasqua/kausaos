@@ -656,7 +656,7 @@ export const allTools: ToolDefinition[] = [
   // --- UsePod Integration (3) ---
   {
     name: 'register_usepod_token',
-    description: 'Register a UsePod inference token for a pocket. Creates a token with a USDC deposit address on UsePod marketplace. Required before funding.',
+    description: 'Register a UsePod inference token for a pocket. Creates a token with a deposit code on UsePod marketplace. Required before funding.',
     input_schema: {
       type: 'object',
       properties: {
@@ -667,7 +667,7 @@ export const allTools: ToolDefinition[] = [
   },
   {
     name: 'fund_usepod',
-    description: 'Fund a UsePod token balance from a pocket. Swaps SOL to USDC via Jupiter, then transfers USDC to UsePod deposit address. Pocket must have a registered UsePod token.',
+    description: 'Fund a UsePod token balance from a pocket. Swaps SOL to USDC via Jupiter, then deposits USDC to UsePod via on-chain program instruction. Pocket must have a registered UsePod token.',
     input_schema: {
       type: 'object',
       properties: {
@@ -679,7 +679,7 @@ export const allTools: ToolDefinition[] = [
   },
   {
     name: 'check_usepod_balance',
-    description: 'Check the UsePod token info and deposit address for a pocket. Shows registered token and deposit address.',
+    description: 'Check the UsePod token info and deposit code for a pocket. Shows registered token and deposit code.',
     input_schema: {
       type: 'object',
       properties: {
@@ -688,6 +688,20 @@ export const allTools: ToolDefinition[] = [
       required: ['pocket_id'],
     },
   },
+  {
+    name: 'usepod_query',
+    description: 'Send an inference query to UsePod marketplace using a pocket\'s registered token. The pocket must have a registered and funded UsePod token. Returns the AI model response.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pocket_id: { type: 'string', description: 'Pocket ID with registered UsePod token' },
+        prompt: { type: 'string', description: 'The prompt/question to send to the AI model' },
+        model: { type: 'string', description: 'Model to use (default: claude-sonnet-4-6). 63 models available including: claude-sonnet-4-6, claude-opus-4-8, gpt-4o, gpt-5.4-mini, deepseek-v4-pro, qwen3-max, llama-3.3-70b, o3-mini, gemini-3-flash-preview' },
+      },
+      required: ['pocket_id', 'prompt'],
+    },
+  },
+
 
 ];
 
@@ -1428,6 +1442,62 @@ export async function executeTool(
           };
         } else {
           result = pocketRes;
+        }
+        break;
+      }
+
+
+      case 'usepod_query': {
+        // Get pocket info to retrieve UsePod token
+        const uqPocketRes = await apiClient.getPocket(input.pocket_id as string);
+        if (!uqPocketRes.success || !uqPocketRes.data?.pocket) {
+          result = { success: false, error: 'Pocket not found' };
+          break;
+        }
+        const uqPocket = uqPocketRes.data.pocket;
+        if (!uqPocket.usepod_token) {
+          result = { success: false, error: 'No UsePod token registered for this pocket. Use register_usepod_token first.' };
+          break;
+        }
+
+        // Call UsePod proxy directly
+        const uqModel = (input.model as string) || 'claude-sonnet-4-6';
+        const uqPrompt = input.prompt as string;
+        try {
+          const axios = (await import('axios')).default;
+          const uqResp = await axios.post(
+            `https://api.usepod.ai/proxy/${uqPocket.usepod_token}/v1/chat/completions`,
+            {
+              model: uqModel,
+              messages: [{ role: 'user', content: uqPrompt }],
+              max_tokens: 2048,
+            },
+            {
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer unused',
+              },
+              timeout: 60000,
+            }
+          );
+
+          const uqData = uqResp.data;
+          const uqText = uqData.choices?.[0]?.message?.content || '';
+          const uqBalance = uqResp.headers?.['x-balance-remaining'] || null;
+          const uqRoute = uqResp.headers?.['x-pod-route'] || null;
+
+          result = {
+            success: true,
+            data: {
+              response: uqText,
+              model: uqModel,
+              balance_remaining: uqBalance,
+              route: uqRoute,
+            },
+          };
+        } catch (uqErr: any) {
+          const errMsg = uqErr.response?.data?.error?.message || uqErr.message || 'UsePod inference failed';
+          result = { success: false, error: errMsg };
         }
         break;
       }

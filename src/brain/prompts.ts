@@ -305,25 +305,28 @@ Example user requests:
 UsePod is a decentralized AI inference marketplace on Solana. Agents can use UsePod for private, censorship-resistant LLM inference paid in USDC.
 
 UsePod uses a token-based balance system (not wallet-based payment):
-1. Register a token: creates a token + USDC deposit address on UsePod
-2. Fund the token: send USDC to the deposit address to add balance
+1. Register a token: creates a token + deposit code on UsePod
+2. Fund the token: deposit USDC to UsePod via on-chain program instruction
 3. Use the token: inference requests debit from pre-funded balance
 
 Privacy flow with KausaLayer:
 - Create a Maze Pocket (SOL funded via maze routing, unlinkable to user)
 - Register UsePod token for the pocket
-- Fund UsePod from the pocket (SOL swapped to USDC via Jupiter, USDC sent to deposit address)
+- Fund UsePod from the pocket (SOL swapped to USDC via Jupiter, USDC deposited via UsePod program instruction)
 - On-chain observer sees USDC from an unlinkable pocket address. Privacy preserved.
 
 Tools:
 - register_usepod_token: register a UsePod token for a pocket (required first step)
-- fund_usepod: swap SOL to USDC and fund the UsePod deposit address from a pocket
-- check_usepod_balance: check if pocket has a registered UsePod token and deposit address
+- fund_usepod: swap SOL to USDC and deposit to UsePod via on-chain program from a pocket
+- check_usepod_balance: check if pocket has a registered UsePod token and deposit code
+- usepod_query: send an inference query to UsePod using a pocket's registered token. Returns AI model response.
 
 Example user requests:
 - "Register UsePod for pocket_abc" -> register_usepod_token with pocket_id: pocket_abc
 - "Fund UsePod with 0.5 SOL from pocket_abc" -> fund_usepod with pocket_id: pocket_abc, amount_sol: 0.5
 - "Check my UsePod status" -> check_usepod_balance with pocket_id
+- "Ask UsePod what is Solana" -> usepod_query with pocket_id, prompt: "what is Solana"
+- "Use UsePod to explain ZK proofs" -> usepod_query with pocket_id, prompt: "explain ZK proofs"
 
 Important: Always register_usepod_token before fund_usepod. Funding without registration will fail.
 
@@ -337,7 +340,7 @@ UsePod trigger:
 Note: UsePod balance is tracked from X-Balance-Remaining header on inference calls.
 
 UsePod action:
-- fund_usepod: auto-register (if needed) + swap SOL to USDC + fund UsePod deposit address
+- fund_usepod: auto-register (if needed) + swap SOL to USDC + deposit to UsePod via on-chain program
   action_params: { pocket_id: "pocket_xxx", amount_sol: 0.5 }
 
 Example strategy: "Auto top-up UsePod when balance is low"
