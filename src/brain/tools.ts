@@ -1425,23 +1425,38 @@ export async function executeTool(
         });
         break;
       case 'check_usepod_balance': {
-        const pocketRes = await apiClient.getPocket(input.pocket_id as string);
-        if (pocketRes.success && pocketRes.data?.pocket) {
-          const p = pocketRes.data.pocket;
+        const cbPocketRes = await apiClient.getPocket(input.pocket_id as string);
+        if (cbPocketRes.success && cbPocketRes.data?.pocket) {
+          const cbp = cbPocketRes.data.pocket;
+          let cbBalance: string | null = null;
+          let cbFunded = false;
+
+          // Use last known balance from database (saved by usepod_query)
+          const cbLastBalance = cbp.usepod_last_balance || null;
+          if (cbLastBalance && cbLastBalance > 0) {
+            cbFunded = true;
+            cbBalance = String(cbLastBalance);
+          }
+
           result = {
             success: true,
             data: {
               pocket_id: input.pocket_id,
-              usepod_token: p.usepod_token || null,
-              usepod_deposit_address: p.usepod_deposit_address || null,
-              registered: !!p.usepod_token,
-              message: p.usepod_token
-                ? 'UsePod token registered. Use fund_usepod to add balance.'
-                : 'No UsePod token registered. Use register_usepod_token first.',
+              usepod_token: cbp.usepod_token || null,
+              usepod_deposit_code: cbp.usepod_deposit_address || null,
+              registered: !!cbp.usepod_token,
+              funded: cbFunded,
+              balance_remaining: cbBalance,
+              message: !cbp.usepod_token
+                ? 'No UsePod token registered. Use register_usepod_token first.'
+                : cbFunded
+                  ? `UsePod token active and funded. Balance: ${cbBalance} credits (~$${(parseFloat(cbBalance || '0') / 1000000).toFixed(2)} USDC) remaining.`
+                  : 'UsePod token registered. Balance unknown - make a query to check.',
             },
           };
+
         } else {
-          result = pocketRes;
+          result = cbPocketRes;
         }
         break;
       }
@@ -1483,8 +1498,16 @@ export async function executeTool(
 
           const uqData = uqResp.data;
           const uqText = uqData.choices?.[0]?.message?.content || '';
-          const uqBalance = uqResp.headers?.['x-balance-remaining'] || null;
+          const uqBalanceRaw = uqResp.headers?.['x-balance-remaining'] || null;
+          const uqBalance = uqBalanceRaw ? String(uqBalanceRaw).split(',').pop()?.trim() || null : null;
           const uqRoute = uqResp.headers?.['x-pod-route'] || null;
+
+          // Save balance to backend for persistent tracking
+          if (uqBalance) {
+            try {
+              await apiClient.usepodUpdateBalance(input.pocket_id as string, parseFloat(uqBalance));
+            } catch (_) {}
+          }
 
           result = {
             success: true,
@@ -1492,6 +1515,7 @@ export async function executeTool(
               response: uqText,
               model: uqModel,
               balance_remaining: uqBalance,
+                balance_remaining_usdc: uqBalance ? (parseFloat(uqBalance) / 1000000).toFixed(4) : null,
               route: uqRoute,
             },
           };

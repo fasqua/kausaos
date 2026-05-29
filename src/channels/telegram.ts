@@ -331,8 +331,9 @@ export class TelegramChannel {
 
       // Auto-monitor deposit if a pocket was just created
       const pocketMatch = response.match(/pocket_[a-z0-9]+/);
-      const depositMatch = response.match(/deposit|deposit_address|waiting for funding/i);
-      if (pocketMatch && depositMatch) {
+      const depositMatch = response.match(/waiting for funding|send SOL to fund|deposit address to fund/i);
+        if (pocketMatch && depositMatch) {
+          console.log(`[Telegram] monitorDeposit TRIGGERED by: pocket=${pocketMatch[0]}, depositMatch=${depositMatch[0]}, response snippet: ${response.slice(0, 100)}`);
         const pocketId = pocketMatch[0];
         this.monitorDeposit(chatId, pocketId, session.brain.getApiClient());
       }

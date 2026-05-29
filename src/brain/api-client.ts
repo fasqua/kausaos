@@ -426,4 +426,8 @@ export class KausaLayerClient {
     return this.request('post', `/pocket/${pocketId}/usepod/fund`, params);
   }
 
+  async usepodUpdateBalance(pocketId: string, balance: number): Promise<ApiResponse> {
+    return this.request('post', `/pocket/${pocketId}/usepod/balance`, { balance });
+  }
+
 }
